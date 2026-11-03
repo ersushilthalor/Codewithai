@@ -4,25 +4,17 @@ data class ReaEngineState(
     val status: EngineStatus = EngineStatus.NOT_INSTALLED,
     val version: String = "v1.4.2-core",
     val repoUrl: String = "https://github.com/morluto/rea",
-    val cloudWorkerEndpoint: String = "https://worker-node.rea.internal:8080",
-    val cloudWorkerToken: String = "rea_live_worker_token_secure",
+    val cloudWorkerEndpoint: String = "",
+    val cloudWorkerToken: String = "",
     val mcpConnected: Boolean = false,
-    val nodeVersion: String = "v22.23.4",
-    val jdkVersion: String = "OpenJDK 17.0.12",
-    val jadxVersion: String = "1.5.0-mcp",
-    val apktoolVersion: String = "2.9.3",
+    val nodeVersion: String = "",
+    val jdkVersion: String = "",
+    val jadxVersion: String = "",
+    val apktoolVersion: String = "",
     val logs: List<String> = emptyList(),
     val progressPercent: Int = 0,
     val currentStep: String = "Idle",
-    val activeTools: List<String> = listOf(
-        "rea_inspect_apk",
-        "rea_jadx_decompile",
-        "rea_apktool_decode",
-        "rea_manifest_extract",
-        "rea_architecture_map",
-        "rea_build_diagnose",
-        "rea_git_sync"
-    )
+    val activeTools: List<String> = emptyList()
 )
 
 enum class EngineStatus {
@@ -61,6 +53,7 @@ data class AiProvider(
     val baseUrl: String,
     val analysisModel: String,
     val codeGenModel: String,
+    val availableModels: List<String> = emptyList(),
     val temperature: Float = 0.2f,
     val maxTokens: Int = 4096,
     val supportsToolCalling: Boolean = true,
@@ -125,6 +118,12 @@ data class DecompiledFile(
     val isModified: Boolean = false
 )
 
+data class SecurityFinding(
+    val title: String,
+    val severity: String, // "HIGH", "MEDIUM", "LOW", "INFO"
+    val reason: String
+)
+
 data class ApkAnalysisResult(
     val id: String,
     val appName: String,
@@ -133,11 +132,12 @@ data class ApkAnalysisResult(
     val versionCode: Int,
     val minSdk: Int,
     val targetSdk: Int,
-    val compileSdk: Int = 36,
+    val compileSdk: Int = 0,
     val apkSizeBytes: Long,
     val sha256: String,
-    val signatureScheme: String = "v2 + v3 (Verified)",
-    val signingStatus: String = "Release Signed",
+    val signatureScheme: String = "v1 only",
+    val signingStatus: String = "Signature present (certificate parsed, chain not verified)",
+    val signerCertSha256: String? = null,
     val permissions: List<ApkPermission> = emptyList(),
     val activities: List<ApkComponent> = emptyList(),
     val services: List<ApkComponent> = emptyList(),
@@ -145,10 +145,16 @@ data class ApkAnalysisResult(
     val providers: List<ApkComponent> = emptyList(),
     val dexClassesCount: Int = 0,
     val dexMethodsCount: Int = 0,
+    val classDescriptors: List<String> = emptyList(),
     val detectedFrameworks: List<String> = emptyList(),
-    val obfuscationLevel: String = "R8 Obfuscated (Control Flow Preserved)",
-    val architecturePattern: String = "MVVM + Clean Architecture + Jetpack",
+    val obfuscationLevel: String = "Not obviously obfuscated",
+    val architecturePattern: String = "Not determined",
     val rawManifestXml: String = "",
+    val debuggable: Boolean = false,
+    val allowBackup: Boolean = true,
+    val usesCleartextTraffic: Boolean = false,
+    val networkSecurityConfig: String? = null,
+    val securityFindings: List<SecurityFinding> = emptyList(),
     val decompiledClasses: List<DecompiledFile> = emptyList(),
     val resourcesTree: List<ApkResourceItem> = emptyList(),
     val evidenceList: List<String> = emptyList(),
@@ -209,6 +215,11 @@ data class CodeDiff(
     val replacementSnippet: String
 )
 
+sealed class ApplyDiffResult {
+    data class Applied(val filePath: String, val previousContent: String) : ApplyDiffResult()
+    data class Failed(val reason: String) : ApplyDiffResult()
+}
+
 data class ReaSkillAction(
     val skillKey: String,
     val title: String,
@@ -257,6 +268,8 @@ data class AgentMessage(
     val text: String,
     val toolCalls: List<ToolCallInfo> = emptyList(),
     val proposedDiff: CodeDiff? = null,
+    val isDiffApplied: Boolean = false,
+    val previousContentForUndo: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val selectedApkName: String? = null,
     val selectedApkSize: Long? = null,
@@ -292,10 +305,10 @@ data class BuildJob(
 )
 
 data class GitHubConfig(
-    val username: String = "developer-mobile",
+    val username: String = "",
     val token: String = "",
-    val isConnected: Boolean = true,
-    val currentRepo: String? = "morluto-rea/sample-reconstructed-app",
+    val isConnected: Boolean = false,
+    val currentRepo: String? = null,
     val currentBranch: String = "main"
 )
 

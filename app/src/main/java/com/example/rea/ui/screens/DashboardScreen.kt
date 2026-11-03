@@ -107,6 +107,8 @@ fun DashboardScreen(
         }
     }
 
+    val isThinking by viewModel.agentService.isAgentThinking.collectAsState()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -405,9 +407,10 @@ fun DashboardScreen(
                 TextField(
                     value = inputText,
                     onValueChange = { inputText = it },
+                    enabled = !isThinking,
                     placeholder = {
                         Text(
-                            text = "Message REA or tap + to Select APK...",
+                            text = if (isThinking) "Thinking..." else "Message REA or tap + to Select APK...",
                             fontSize = 13.sp,
                             color = TextMuted,
                             maxLines = 1,
@@ -433,16 +436,16 @@ fun DashboardScreen(
                 // Send Button
                 IconButton(
                     onClick = {
-                        if (inputText.isNotBlank()) {
+                        if (inputText.isNotBlank() && !isThinking) {
                             viewModel.sendChatPrompt(inputText.trim())
                             inputText = ""
                         }
                     },
-                    enabled = inputText.isNotBlank(),
+                    enabled = inputText.isNotBlank() && !isThinking,
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
-                        .background(if (inputText.isNotBlank()) CleanBlue else CleanSurfaceLight)
+                        .background(if (inputText.isNotBlank() && !isThinking) CleanBlue else CleanSurfaceLight)
                         .testTag("chat_send_btn")
                 ) {
                     Icon(
@@ -1020,10 +1023,11 @@ private fun AgentMessageCard(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    val isRealApk = exportCard.apkFileName.endsWith(".apk")
                                     Text(
-                                        text = "${formatBytes(exportCard.sizeBytes)} • Signed APK • Ready to Install",
+                                        text = if (isRealApk) "${formatBytes(exportCard.sizeBytes)} • Compiled APK • Ready to Install" else "${formatBytes(exportCard.sizeBytes)} • Project ZIP Source Bundle",
                                         fontSize = 11.sp,
-                                        color = CleanGreen
+                                        color = if (isRealApk) CleanGreen else CleanBlue
                                     )
                                 }
                             }
@@ -1051,6 +1055,7 @@ private fun AgentMessageCard(
                                     }
                                 }
                             } else {
+                                val isRealApk = exportCard.apkFileName.endsWith(".apk")
                                 Button(
                                     onClick = onExportApk,
                                     colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
@@ -1063,7 +1068,7 @@ private fun AgentMessageCard(
                                     Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Save Final APK to Device",
+                                        text = if (isRealApk) "Save APK" else "Save project ZIP",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
                                     )

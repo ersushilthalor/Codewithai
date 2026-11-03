@@ -1,7 +1,5 @@
 package com.example.rea.data.service
 
-import java.io.ByteArrayInputStream
-import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -12,14 +10,14 @@ import java.nio.ByteOrder
 class AxmlParser {
 
     companion object {
-        private const val CHUNK_XML = 0x00080003
-        private const val CHUNK_STRING_POOL = 0x001C0001
-        private const val CHUNK_RESOURCE_IDS = 0x00080180
-        private const val CHUNK_START_NAMESPACE = 0x00100100
-        private const val CHUNK_END_NAMESPACE = 0x00100101
-        private const val CHUNK_START_TAG = 0x00100102
-        private const val CHUNK_END_TAG = 0x00100103
-        private const val CHUNK_TEXT = 0x00100104
+        const val TYPE_XML = 0x0003
+        const val TYPE_STRING_POOL = 0x0001
+        const val TYPE_RESOURCE_IDS = 0x0180
+        const val TYPE_START_NAMESPACE = 0x0100
+        const val TYPE_END_NAMESPACE = 0x0101
+        const val TYPE_START_TAG = 0x0102
+        const val TYPE_END_TAG = 0x0103
+        const val TYPE_TEXT = 0x0104
 
         fun parse(bytes: ByteArray): String {
             if (bytes.size < 8) return ""
@@ -31,13 +29,11 @@ class AxmlParser {
         }
 
         private fun fallbackManifestXml(bytes: ByteArray): String {
-            // Extract ASCII strings from the string pool as fallback
             val sb = StringBuilder()
             var i = 0
             val strings = mutableListOf<String>()
             while (i < bytes.size - 1) {
                 if (bytes[i] in 32..126 && bytes[i + 1] == 0.toByte()) {
-                    val start = i
                     val strBuilder = StringBuilder()
                     while (i < bytes.size - 1 && bytes[i] in 32..126 && bytes[i + 1] == 0.toByte()) {
                         strBuilder.append(bytes[i].toInt().toChar())
@@ -61,9 +57,10 @@ class AxmlParser {
 
     private fun decode(bytes: ByteArray): String {
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-        val fileType = buffer.int
-        if (fileType != CHUNK_XML && (fileType and 0xFFFF) != 0x0003) {
-            return "<!-- Not a valid Android Binary XML format (magic: 0x${fileType.toString(16)}) -->"
+        val fileRawType = buffer.int
+        val fileType = fileRawType and 0xFFFF
+        if (fileType != TYPE_XML) {
+            return "<!-- Not a valid Android Binary XML format (magic: 0x${fileRawType.toString(16)}) -->"
         }
         val fileSize = buffer.int
 
@@ -79,18 +76,27 @@ class AxmlParser {
         while (buffer.hasRemaining()) {
             val chunkPos = buffer.position()
             if (chunkPos + 8 > bytes.size) break
-            val chunkType = buffer.int
+            val rawType = buffer.int
             val chunkSize = buffer.int
+            val type = rawType and 0xFFFF
+            val headerSize = rawType ushr 16
+
             if (chunkSize <= 0 || chunkPos + chunkSize > bytes.size) break
 
-            when (chunkType) {
-                CHUNK_STRING_POOL, 0x0001 -> {
+            when (type) {
+                TYPE_STRING_POOL -> {
+                    // Header is ALWAYS 5 ints after the 8-byte chunk header:
+                    // stringCount, styleCount, flags, stringsStart, stylesStart
                     val stringCount = buffer.int
                     val styleCount = buffer.int
                     val flags = buffer.int
-                    val stringsOffset = chunkPos + buffer.int
-                    val stylesOffset = if (styleCount > 0) chunkPos + buffer.int else 0
+                    val stringsStart = buffer.int
+                    val stylesStart = buffer.int
                     val isUtf8 = (flags and (1 shl 8)) != 0
+
+                    val stringsOffset = chunkPos + stringsStart
+                    val offsetsPos = chunkPos + headerSize
+                    buffer.position(offsetsPos)
 
                     val stringOffsets = IntArray(stringCount)
                     for (i in 0 until stringCount) {
@@ -108,29 +114,21 @@ class AxmlParser {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_RESOURCE_IDS, 0x0180 -> {
-                    // Resource IDs mapping, skip to next chunk
+                TYPE_RESOURCE_IDS -> {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_START_NAMESPACE -> {
-                    // line number, comment
-                    buffer.int
-                    buffer.int
-                    val prefixIdx = buffer.int
-                    val uriIdx = buffer.int
-                    // Namespaces are tracked
+                TYPE_START_NAMESPACE -> {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_END_NAMESPACE -> {
+                TYPE_END_NAMESPACE -> {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_START_TAG -> {
-                    // lineNumber, comment
-                    buffer.int
-                    buffer.int
+                TYPE_START_TAG -> {
+                    val lineNumber = buffer.int
+                    val comment = buffer.int
                     val nsIdx = buffer.int
                     val nameIdx = buffer.int
                     val attrStart = buffer.short
@@ -156,7 +154,7 @@ class AxmlParser {
                         val aData = buffer.int
 
                         val attrName = stringPool.getOrNull(aNameIdx) ?: "attr$a"
-                        val attrVal = if (aValStrIdx >= 0 && aValStrIdx < stringPool.size) {
+                        val attrVal = if (aValStrIdx in 0 until stringPool.size) {
                             stringPool[aValStrIdx]
                         } else {
                             formatAttrValue(aType, aData)
@@ -173,11 +171,10 @@ class AxmlParser {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_END_TAG -> {
-                    // lineNumber, comment, nsIdx, nameIdx
-                    buffer.int
-                    buffer.int
-                    buffer.int
+                TYPE_END_TAG -> {
+                    val lineNumber = buffer.int
+                    val comment = buffer.int
+                    val nsIdx = buffer.int
                     val nameIdx = buffer.int
                     val tagName = stringPool.getOrNull(nameIdx) ?: "element"
                     indent = (indent - 1).coerceAtLeast(0)
@@ -186,7 +183,7 @@ class AxmlParser {
                     buffer.position(chunkPos + chunkSize)
                 }
 
-                CHUNK_TEXT -> {
+                TYPE_TEXT -> {
                     buffer.position(chunkPos + chunkSize)
                 }
 
@@ -203,7 +200,6 @@ class AxmlParser {
         return try {
             if (isUtf8) {
                 var pos = offset
-                // UTF-8 length can be 1 or 2 bytes
                 var len = bytes[pos].toInt() and 0xFF
                 pos++
                 if ((len and 0x80) != 0) {

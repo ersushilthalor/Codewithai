@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.rea.data.model.AiProvider
@@ -29,12 +30,14 @@ import com.example.rea.ui.viewmodel.ReaViewModel
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: ReaViewModel,
     modifier: Modifier = Modifier
 ) {
     val providers by viewModel.providerManager.providers.collectAsState()
+    val gitHubConfig by viewModel.gitHubConfig.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -43,6 +46,11 @@ fun SettingsScreen(
     var selectedProviderForAddingKey by remember { mutableStateOf<AiProvider?>(null) }
     var extraKeyInput by remember { mutableStateOf("") }
     var showPresetPickerModal by remember { mutableStateOf(false) }
+
+    var ghTokenInput by remember(gitHubConfig.token) { mutableStateOf(gitHubConfig.token) }
+    var ghRepoInput by remember(gitHubConfig.currentRepo) { mutableStateOf(gitHubConfig.currentRepo ?: "reconstructed-app") }
+    var isValidatingGh by remember { mutableStateOf(false) }
+    var isPushingGh by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -53,8 +61,8 @@ fun SettingsScreen(
     ) {
         item {
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Settings & AI Providers", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = TextMain)
-            Text("Configure AI providers with automatic multi-key rotation", fontSize = 12.sp, color = TextMuted)
+            Text("Settings & Integrations", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = TextMain)
+            Text("Configure AI providers, GitHub integration, and worker runtime", fontSize = 12.sp, color = TextMuted)
         }
 
         // Add Provider Button - Launches Automatic Presets
@@ -80,6 +88,10 @@ fun SettingsScreen(
         }
 
         items(providers) { prov ->
+            var isEditingModels by remember { mutableStateOf(false) }
+            var editAnalysisModel by remember(prov.analysisModel) { mutableStateOf(prov.analysisModel) }
+            var editCodeGenModel by remember(prov.codeGenModel) { mutableStateOf(prov.codeGenModel) }
+
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = CleanSurface,
@@ -114,7 +126,7 @@ fun SettingsScreen(
                             Column {
                                 Text(prov.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
                                 Text(
-                                    text = "${prov.analysisModel} • ${prov.apiKeys.size} Key(s)",
+                                    text = "${prov.codeGenModel} • ${prov.apiKeys.size} Key(s)",
                                     fontSize = 11.sp,
                                     color = TextMuted
                                 )
@@ -122,7 +134,7 @@ fun SettingsScreen(
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            // Test Key
+                            // Test Key (C4 free GET /models)
                             IconButton(
                                 onClick = {
                                     scope.launch {
@@ -133,6 +145,14 @@ fun SettingsScreen(
                                 modifier = Modifier.size(32.dp).testTag("test_prov_${prov.id}")
                             ) {
                                 Icon(Icons.Default.Bolt, contentDescription = "Test", tint = CleanBlue, modifier = Modifier.size(18.dp))
+                            }
+
+                            // Edit Models (C4)
+                            IconButton(
+                                onClick = { isEditingModels = !isEditingModels },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.Tune, contentDescription = "Models", tint = if (isEditingModels) CleanBlue else TextMuted, modifier = Modifier.size(18.dp))
                             }
 
                             // Set Default
@@ -147,6 +167,38 @@ fun SettingsScreen(
                                     Icon(Icons.Default.StarOutline, contentDescription = "Set Default", tint = TextMuted, modifier = Modifier.size(18.dp))
                                 }
                             }
+                        }
+                    }
+
+                    if (isEditingModels) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = editAnalysisModel,
+                            onValueChange = { editAnalysisModel = it },
+                            label = { Text("Analysis Model", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CleanBlue, unfocusedBorderColor = CleanBorder)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = editCodeGenModel,
+                            onValueChange = { editCodeGenModel = it },
+                            label = { Text("CodeGen Model", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CleanBlue, unfocusedBorderColor = CleanBorder)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            onClick = {
+                                viewModel.providerManager.updateProviderModels(prov.id, editAnalysisModel, editCodeGenModel)
+                                isEditingModels = false
+                                Toast.makeText(context, "Models updated for ${prov.name}", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().height(36.dp)
+                        ) {
+                            Text("Save Model Names", fontSize = 12.sp)
                         }
                     }
 
@@ -235,7 +287,6 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Button to Add Extra Backup Key
                     OutlinedButton(
                         onClick = {
                             selectedProviderForAddingKey = prov
@@ -249,6 +300,116 @@ fun SettingsScreen(
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("+ Add Another Backup Key to ${prov.name}", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        // GitHub Integration (F1)
+        item {
+            Text("GitHub & Cloud Build Integration", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+        }
+
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = CleanSurface,
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (gitHubConfig.isConnected) CleanGreen else CleanBorder
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("GitHub Account", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                            Text(
+                                text = if (gitHubConfig.isConnected) "Connected as @${gitHubConfig.username}" else "Not connected",
+                                fontSize = 11.sp,
+                                color = if (gitHubConfig.isConnected) CleanGreen else TextMuted
+                            )
+                        }
+                        if (gitHubConfig.isConnected) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Required token permissions: classic token with 'repo' and 'workflow' scopes.",
+                        fontSize = 11.sp,
+                        color = CleanOrange
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = ghTokenInput,
+                        onValueChange = { ghTokenInput = it },
+                        label = { Text("GitHub Personal Access Token (PAT)", fontSize = 11.sp) },
+                        placeholder = { Text("ghp_...", fontSize = 11.sp) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CleanBlue, unfocusedBorderColor = CleanBorder)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    isValidatingGh = true
+                                    val (ok, res) = viewModel.validateAndSaveGitHubToken(ghTokenInput)
+                                    isValidatingGh = false
+                                    Toast.makeText(context, if (ok) "✓ Validated as @$res" else res, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = !isValidatingGh && ghTokenInput.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
+                        ) {
+                            Text(if (isValidatingGh) "Validating..." else "Validate Token", fontSize = 12.sp)
+                        }
+                    }
+
+                    if (gitHubConfig.isConnected) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = ghRepoInput,
+                            onValueChange = { ghRepoInput = it },
+                            label = { Text("Repository Name", fontSize = 11.sp) },
+                            placeholder = { Text("reconstructed-app", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CleanBlue, unfocusedBorderColor = CleanBorder)
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    isPushingGh = true
+                                    val (ok, res) = viewModel.pushProjectToGitHub(ghRepoInput)
+                                    isPushingGh = false
+                                    Toast.makeText(context, res, Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            enabled = !isPushingGh && ghRepoInput.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanSurfaceLight, contentColor = TextMain),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
+                        ) {
+                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (isPushingGh) "Pushing to GitHub..." else "Push Project Files", fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -284,7 +445,7 @@ fun SettingsScreen(
                                     com.example.rea.data.model.EngineStatus.RUNNING -> "Connected • MCP Tools Active"
                                     com.example.rea.data.model.EngineStatus.ERROR -> "Connection Failed • Check URL"
                                     com.example.rea.data.model.EngineStatus.STOPPED -> "Configured • Stopped"
-                                    else -> "NOT CONFIGURED • Decompiler Worker"
+                                    else -> "NOT CONFIGURED • Optional Worker"
                                 },
                                 fontSize = 11.sp,
                                 color = if (engineState.mcpConnected) CleanGreen else if (engineState.status == com.example.rea.data.model.EngineStatus.ERROR) CleanRed else TextMuted

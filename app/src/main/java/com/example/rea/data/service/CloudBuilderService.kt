@@ -1,9 +1,12 @@
 package com.example.rea.data.service
 
+import android.content.Context
 import com.example.rea.data.model.BuildJob
 import com.example.rea.data.model.BuildStatus
+import com.example.rea.data.model.DecompiledFile
 import com.example.rea.data.model.Project
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,41 +15,126 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
-class CloudBuilderService {
+class CloudBuilderService(private val context: Context? = null) {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
 
-    private val _buildJobs = MutableStateFlow<List<BuildJob>>(emptyList())
+    private val buildsFile: File?
+        get() = context?.let { File(it.filesDir, "builds.json") }
+
+    private val artifactsDir: File?
+        get() = context?.let {
+            File(it.filesDir, "artifacts").apply { if (!exists()) mkdirs() }
+        }
+
+    private val _buildJobs = MutableStateFlow<List<BuildJob>>(loadInitialBuildJobs())
     val buildJobs: StateFlow<List<BuildJob>> = _buildJobs.asStateFlow()
 
+    private fun loadInitialBuildJobs(): List<BuildJob> {
+        val file = buildsFile ?: return emptyList()
+        if (!file.exists()) return emptyList()
+        return try {
+            val arr = JSONArray(file.readText())
+            val list = mutableListOf<BuildJob>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val logsArr = obj.optJSONArray("logs") ?: JSONArray()
+                val logs = mutableListOf<String>()
+                for (j in 0 until logsArr.length()) logs.add(logsArr.getString(j))
+
+                list.add(
+                    BuildJob(
+                        id = obj.getString("id"),
+                        projectId = obj.getString("projectId"),
+                        projectName = obj.getString("projectName"),
+                        buildType = obj.optString("buildType", "DEBUG_APK"),
+                        status = BuildStatus.valueOf(obj.getString("status")),
+                        logs = logs,
+                        artifactName = if (obj.has("artifactName") && !obj.isNull("artifactName")) obj.getString("artifactName") else null,
+                        artifactSizeBytes = if (obj.has("artifactSizeBytes") && !obj.isNull("artifactSizeBytes")) obj.getLong("artifactSizeBytes") else null,
+                        artifactSha256 = if (obj.has("artifactSha256") && !obj.isNull("artifactSha256")) obj.getString("artifactSha256") else null,
+                        startedAt = obj.optLong("startedAt", System.currentTimeMillis()),
+                        finishedAt = if (obj.has("finishedAt") && !obj.isNull("finishedAt")) obj.getLong("finishedAt") else null,
+                        errorReason = if (obj.has("errorReason") && !obj.isNull("errorReason")) obj.getString("errorReason") else null,
+                        progressPercent = obj.optInt("progressPercent", 100)
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun persistBuildJobs() {
+        val file = buildsFile ?: return
+        try {
+            val arr = JSONArray()
+            _buildJobs.value.take(50).forEach { job ->
+                val obj = JSONObject()
+                obj.put("id", job.id)
+                obj.put("projectId", job.projectId)
+                obj.put("projectName", job.projectName)
+                obj.put("buildType", job.buildType)
+                obj.put("status", job.status.name)
+                obj.put("startedAt", job.startedAt)
+                obj.put("finishedAt", job.finishedAt ?: JSONObject.NULL)
+                obj.put("artifactName", job.artifactName ?: JSONObject.NULL)
+                obj.put("artifactSizeBytes", job.artifactSizeBytes ?: JSONObject.NULL)
+                obj.put("artifactSha256", job.artifactSha256 ?: JSONObject.NULL)
+                obj.put("errorReason", job.errorReason ?: JSONObject.NULL)
+                obj.put("progressPercent", job.progressPercent)
+
+                val logsArr = JSONArray()
+                job.logs.forEach { logsArr.put(it) }
+                obj.put("logs", logsArr)
+
+                arr.put(obj)
+            }
+            file.writeText(arr.toString())
+        } catch (_: Exception) {}
+    }
+
+    private fun updateJobList(job: BuildJob) {
+        val current = _buildJobs.value
+        val index = current.indexOfFirst { it.id == job.id }
+        _buildJobs.value = if (index >= 0) {
+            current.toMutableList().apply { set(index, job) }
+        } else {
+            listOf(job) + current
+        }
+        persistBuildJobs()
+    }
+
     /**
-     * Executes an actual build operation.
-     * If a remote build worker endpoint is configured, dispatches a real build request.
-     * If no worker is configured, reports NOT CONFIGURED honestly with guidance.
+     * Executes real cloud build using GitHub Actions (F2).
      */
-    suspend fun startBuild(
-        projectId: String,
-        projectName: String,
-        buildType: String = "DEBUG_APK",
-        appId: String = "com.aistudio.reconstructed.app",
-        versionCode: Int = 1,
-        versionName: String = "1.0.0",
-        workerEndpoint: String = "",
-        workerToken: String = "",
+    suspend fun startGitHubActionsBuild(
+        project: Project,
+        githubToken: String,
+        owner: String,
+        repo: String,
+        branch: String = "main",
         onLog: (log: String, progress: Int) -> Unit
     ): BuildJob = withContext(Dispatchers.IO) {
-        val jobId = "build_" + UUID.randomUUID().toString().take(8)
+        val jobId = "gh_build_" + UUID.randomUUID().toString().take(8)
         val logs = mutableListOf<String>()
 
         fun addLog(msg: String, pct: Int) {
@@ -54,139 +142,396 @@ class CloudBuilderService {
             onLog(msg, pct)
         }
 
-        addLog("[INIT] Initializing build request for project: $projectName ($appId)", 10)
-
         val initialJob = BuildJob(
             id = jobId,
-            projectId = projectId,
-            projectName = projectName,
-            buildType = buildType,
+            projectId = project.id,
+            projectName = project.name,
+            buildType = "GITHUB_ACTIONS_APK",
             status = BuildStatus.VALIDATING,
             logs = logs.toList(),
             startedAt = System.currentTimeMillis(),
-            progressPercent = 10
+            progressPercent = 5
         )
         updateJobList(initialJob)
 
-        val endpoint = workerEndpoint.trim()
-
-        if (endpoint.isBlank() || endpoint.contains(".internal")) {
-            addLog("[VALIDATION] Checking build runner availability...", 30)
-            addLog("[NOT CONFIGURED] No remote Linux build worker endpoint is configured.", 50)
-            addLog("[REQUIREMENT] Gradle build execution (task ':app:assembleDebug') requires a Linux worker environment with Android SDK 36 and JDK 17.", 70)
-            addLog("[INSTRUCTION] Please configure your REA Worker Endpoint in Settings, or export the reconstructed project code bundle directly to storage.", 90)
-            addLog("[STOPPED] Build stopped: Remote worker not configured.", 100)
-
-            val failedJob = initialJob.copy(
+        if (githubToken.isBlank() || owner.isBlank() || repo.isBlank()) {
+            addLog("[VALIDATION] GitHub token, owner, or repo is not configured.", 100)
+            val failed = initialJob.copy(
                 status = BuildStatus.FAILED,
-                logs = logs.toList(),
-                errorReason = "Build worker not configured. Configure REA Builder URL in Settings to execute cloud Gradle tasks.",
+                errorReason = "GitHub token or repository details missing in Settings.",
                 finishedAt = System.currentTimeMillis(),
-                progressPercent = 100
+                progressPercent = 100,
+                logs = logs.toList()
             )
-            updateJobList(failedJob)
-            return@withContext failedJob
+            updateJobList(failed)
+            return@withContext failed
         }
 
-        // If a real worker endpoint is configured, dispatch the build
-        addLog("[DISPATCH] Connecting to remote build worker at $endpoint...", 30)
+        addLog("[1/6] Preparing .github/workflows/build.yml CI pipeline...", 10)
+        val workflowYaml = """
+name: Build Debug APK
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+      - name: Build Debug APK
+        run: gradle assembleDebug --stacktrace
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+        """.trimIndent()
+
+        val allFiles = project.files.filter { it.path != ".github/workflows/build.yml" } + DecompiledFile(
+            id = ".github/workflows/build.yml",
+            path = ".github/workflows/build.yml",
+            name = "build.yml",
+            language = "yaml",
+            content = workflowYaml
+        )
+
+        addLog("[2/6] Synchronizing ${allFiles.size} project files to $owner/$repo...", 20)
+        val ghService = GitHubService()
+        val pushResult = ghService.pushFiles(githubToken, owner, repo, allFiles, branch) { cur, total, path ->
+            onLog("Pushed [$cur/$total] $path", 20 + ((cur.toFloat() / total) * 15).toInt())
+        }
+
+        if (pushResult.isFailure) {
+            val err = pushResult.exceptionOrNull()?.message ?: "Push failed"
+            addLog("[ERROR] Failed to push project to GitHub: $err", 100)
+            val failed = initialJob.copy(
+                status = BuildStatus.FAILED,
+                errorReason = err,
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100,
+                logs = logs.toList()
+            )
+            updateJobList(failed)
+            return@withContext failed
+        }
+
+        addLog("[3/6] Triggering GitHub Actions workflow_dispatch on ref '$branch'...", 40)
+        val triggerTime = System.currentTimeMillis() - 5000 // 5 seconds buffer
+
+        val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/build.yml/dispatches"
+        val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
+        val dispatchReq = Request.Builder()
+            .url(dispatchUrl)
+            .header("Authorization", "Bearer $githubToken")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .post(dispatchBody.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        var dispatched = false
+        httpClient.newCall(dispatchReq).execute().use { resp ->
+            if (resp.code == 204) {
+                dispatched = true
+                addLog("[SUCCESS] Workflow dispatch accepted (HTTP 204).", 45)
+            } else {
+                val err = resp.body?.string().orEmpty()
+                addLog("[ERROR] Workflow dispatch rejected (HTTP ${resp.code}): $err", 100)
+                val failed = initialJob.copy(
+                    status = BuildStatus.FAILED,
+                    errorReason = "Workflow trigger rejected: HTTP ${resp.code} - $err",
+                    finishedAt = System.currentTimeMillis(),
+                    progressPercent = 100,
+                    logs = logs.toList()
+                )
+                updateJobList(failed)
+                return@withContext failed
+            }
+        }
+
+        addLog("[4/6] Locating created workflow run...", 50)
+        var runId: Long? = null
+        val maxLocateAttempts = 12
+        for (i in 0 until maxLocateAttempts) {
+            delay(3000)
+            val runsReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/runs?event=workflow_dispatch&per_page=5")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            httpClient.newCall(runsReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val json = JSONObject(resp.body?.string().orEmpty())
+                    val runs = json.optJSONArray("workflow_runs")
+                    if (runs != null && runs.length() > 0) {
+                        for (r in 0 until runs.length()) {
+                            val runObj = runs.getJSONObject(r)
+                            val id = runObj.getLong("id")
+                            runId = id
+                            break
+                        }
+                    }
+                }
+            }
+            if (runId != null) break
+        }
+
+        if (runId == null) {
+            addLog("[ERROR] Could not find created workflow run on GitHub within timeout.", 100)
+            val failed = initialJob.copy(
+                status = BuildStatus.FAILED,
+                errorReason = "Run could not be located on GitHub Actions.",
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100,
+                logs = logs.toList()
+            )
+            updateJobList(failed)
+            return@withContext failed
+        }
+
+        addLog("[5/6] Workflow run #$runId detected. Polling execution progress...", 55)
+        var finalConclusion: String? = null
+        val maxPollTimeMs = 20 * 60 * 1000L // 20 minutes
+        val startPollTime = System.currentTimeMillis()
+
+        while (System.currentTimeMillis() - startPollTime < maxPollTimeMs) {
+            delay(5000)
+            val pollReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            var runStatus = "in_progress"
+            var runConclusion: String? = null
+
+            httpClient.newCall(pollReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val json = JSONObject(resp.body?.string().orEmpty())
+                    runStatus = json.optString("status", "in_progress")
+                    if (json.has("conclusion") && !json.isNull("conclusion")) {
+                        runConclusion = json.getString("conclusion")
+                    }
+                }
+            }
+
+            // Fetch step status from jobs API
+            try {
+                val jobsReq = Request.Builder()
+                    .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId/jobs")
+                    .header("Authorization", "Bearer $githubToken")
+                    .header("Accept", "application/vnd.github+json")
+                    .get()
+                    .build()
+
+                httpClient.newCall(jobsReq).execute().use { jResp ->
+                    if (jResp.isSuccessful) {
+                        val jJson = JSONObject(jResp.body?.string().orEmpty())
+                        val jobsArr = jJson.optJSONArray("jobs")
+                        if (jobsArr != null && jobsArr.length() > 0) {
+                            val firstJob = jobsArr.getJSONObject(0)
+                            val stepsArr = firstJob.optJSONArray("steps") ?: JSONArray()
+                            for (s in 0 until stepsArr.length()) {
+                                val stepObj = stepsArr.getJSONObject(s)
+                                val sName = stepObj.optString("name")
+                                val sStatus = stepObj.optString("status")
+                                val sConclusion = stepObj.optString("conclusion", "")
+                                val logLine = "[JOB] $sName ($sStatus ${if (sConclusion.isNotBlank()) "- $sConclusion" else ""})"
+                                if (!logs.contains(logLine)) {
+                                    addLog(logLine, 65)
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (runStatus == "completed") {
+                finalConclusion = runConclusion
+                break
+            }
+        }
+
+        if (finalConclusion != "success") {
+            // Fetch logs of failure
+            addLog("[BUILD FAILED] GitHub Actions conclusion: $finalConclusion", 90)
+            try {
+                val jobsReq = Request.Builder()
+                    .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId/jobs")
+                    .header("Authorization", "Bearer $githubToken")
+                    .header("Accept", "application/vnd.github+json")
+                    .get()
+                    .build()
+
+                httpClient.newCall(jobsReq).execute().use { jResp ->
+                    if (jResp.isSuccessful) {
+                        val jobsArr = JSONObject(jResp.body?.string().orEmpty()).optJSONArray("jobs")
+                        if (jobsArr != null && jobsArr.length() > 0) {
+                            val jId = jobsArr.getJSONObject(0).getLong("id")
+                            val logReq = Request.Builder()
+                                .url("https://api.github.com/repos/$owner/$repo/actions/jobs/$jId/logs")
+                                .header("Authorization", "Bearer $githubToken")
+                                .get()
+                                .build()
+
+                            httpClient.newCall(logReq).execute().use { lResp ->
+                                val fullLog = lResp.body?.string().orEmpty()
+                                val lastLines = fullLog.lines().takeLast(150)
+                                lastLines.forEach { addLog(it, 95) }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            val failed = initialJob.copy(
+                status = BuildStatus.FAILED,
+                errorReason = "GitHub Actions build completed with conclusion: $finalConclusion",
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100,
+                logs = logs.toList()
+            )
+            updateJobList(failed)
+            return@withContext failed
+        }
+
+        // On success: Download artifact APK (F2.6)
+        addLog("[6/6] Build succeeded! Locating and downloading APK artifact...", 90)
+        var artifactDownloadedName: String? = null
+        var artifactSize: Long? = null
+        var artifactSha256: String? = null
+
         try {
-            val payload = JSONObject().apply {
-                put("projectId", projectId)
-                put("projectName", projectName)
-                put("applicationId", appId)
-                put("buildType", buildType)
-                put("versionCode", versionCode)
-                put("versionName", versionName)
+            val artReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId/artifacts")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            var downloadUrl: String? = null
+            httpClient.newCall(artReq).execute().use { aResp ->
+                if (aResp.isSuccessful) {
+                    val aJson = JSONObject(aResp.body?.string().orEmpty())
+                    val artifacts = aJson.optJSONArray("artifacts")
+                    if (artifacts != null && artifacts.length() > 0) {
+                        downloadUrl = artifacts.getJSONObject(0).optString("archive_download_url")
+                    }
+                }
             }
 
-            val reqBuilder = Request.Builder()
-                .url("$endpoint/api/v1/build")
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            if (downloadUrl != null) {
+                val dlReq = Request.Builder()
+                    .url(downloadUrl!!)
+                    .header("Authorization", "Bearer $githubToken")
+                    .get()
+                    .build()
 
-            if (workerToken.isNotBlank()) {
-                reqBuilder.header("Authorization", "Bearer $workerToken")
-            }
+                httpClient.newCall(dlReq).execute().use { dlResp ->
+                    if (dlResp.isSuccessful && dlResp.body != null) {
+                        val zis = ZipInputStream(dlResp.body!!.byteStream())
+                        var entry: ZipEntry? = zis.nextEntry
+                        while (entry != null) {
+                            if (entry.name.endsWith(".apk")) {
+                                val targetName = "${project.name.replace(" ", "_")}-debug.apk"
+                                val outFile = File(artifactsDir, targetName)
+                                val md = MessageDigest.getInstance("SHA-256")
+                                var totalBytes = 0L
 
-            addLog("[EXEC] Dispatching Gradle task ':app:assembleDebug' to worker...", 60)
-            httpClient.newCall(reqBuilder.build()).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (response.isSuccessful) {
-                    val respJson = JSONObject(body)
-                    val artifact = respJson.optString("artifactName", "$projectName-debug.apk")
-                    val sha = respJson.optString("sha256", "verified")
-                    val size = respJson.optLong("sizeBytes", 16_000_000L)
+                                FileOutputStream(outFile).use { fos ->
+                                    val buf = ByteArray(16384)
+                                    var r: Int
+                                    while (zis.read(buf).also { r = it } != -1) {
+                                        md.update(buf, 0, r)
+                                        fos.write(buf, 0, r)
+                                        totalBytes += r
+                                    }
+                                }
 
-                    addLog("[SUCCESS] Remote build completed successfully (HTTP ${response.code}).", 95)
-                    addLog("[ARTIFACT] Generated: $artifact (SHA-256: $sha)", 100)
-
-                    val completedJob = initialJob.copy(
-                        status = BuildStatus.SUCCESS,
-                        logs = logs.toList(),
-                        artifactName = artifact,
-                        artifactSizeBytes = size,
-                        artifactSha256 = sha,
-                        finishedAt = System.currentTimeMillis(),
-                        progressPercent = 100
-                    )
-                    updateJobList(completedJob)
-                    return@withContext completedJob
-                } else {
-                    addLog("[ERROR] Build worker responded with HTTP ${response.code}: $body", 100)
-                    val errorJob = initialJob.copy(
-                        status = BuildStatus.FAILED,
-                        logs = logs.toList(),
-                        errorReason = "Worker error HTTP ${response.code}: $body",
-                        finishedAt = System.currentTimeMillis(),
-                        progressPercent = 100
-                    )
-                    updateJobList(errorJob)
-                    return@withContext errorJob
+                                artifactDownloadedName = targetName
+                                artifactSize = totalBytes
+                                artifactSha256 = md.digest().joinToString("") { "%02x".format(it) }
+                                addLog("[ARTIFACT] Saved APK: $targetName ($totalBytes bytes, SHA-256: $artifactSha256)", 98)
+                                break
+                            }
+                            entry = zis.nextEntry
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
-            addLog("[FAILURE] Remote worker connection error: ${e.localizedMessage ?: e.javaClass.simpleName}", 100)
-            val errorJob = initialJob.copy(
-                status = BuildStatus.FAILED,
-                logs = logs.toList(),
-                errorReason = "Connection to worker failed: ${e.localizedMessage}",
-                finishedAt = System.currentTimeMillis(),
-                progressPercent = 100
-            )
-            updateJobList(errorJob)
-            return@withContext errorJob
+            addLog("[WARNING] Failed to extract APK artifact: ${e.message}", 95)
         }
+
+        addLog("[COMPLETE] Real GitHub Actions cloud build completed successfully!", 100)
+        val successJob = initialJob.copy(
+            status = BuildStatus.SUCCESS,
+            logs = logs.toList(),
+            artifactName = artifactDownloadedName,
+            artifactSizeBytes = artifactSize,
+            artifactSha256 = artifactSha256,
+            finishedAt = System.currentTimeMillis(),
+            progressPercent = 100
+        )
+        updateJobList(successJob)
+        return@withContext successJob
     }
 
     /**
-     * Packages all real project files into a REAL, valid ZIP container with valid headers and CRC32.
-     * Computes the real SHA-256 and byte size.
+     * Creates a genuine, valid ZIP project source code archive.
      */
     fun createProjectArchive(project: Project): Pair<ByteArray, String> {
         val baos = ByteArrayOutputStream()
-        ZipOutputStream(baos).use { zos ->
-            project.files.forEach { file ->
-                val entryPath = file.path.removePrefix("/")
-                val entry = ZipEntry(entryPath)
-                zos.putNextEntry(entry)
-                zos.write(file.content.toByteArray(Charsets.UTF_8))
-                zos.closeEntry()
-            }
-        }
-        val bytes = baos.toByteArray()
+        val zos = ZipOutputStream(baos)
         val md = MessageDigest.getInstance("SHA-256")
-        val sha256 = md.digest(bytes).joinToString("") { "%02x".format(it) }
-        return bytes to sha256
+
+        for (f in project.files) {
+            val entry = ZipEntry(f.path)
+            zos.putNextEntry(entry)
+            val bytes = f.content.toByteArray(Charsets.UTF_8)
+            zos.write(bytes)
+            md.update(bytes)
+            zos.closeEntry()
+        }
+        zos.finish()
+        zos.flush()
+
+        val zipBytes = baos.toByteArray()
+        val sha256 = md.digest().joinToString("") { "%02x".format(it) }
+        return Pair(zipBytes, sha256)
     }
 
-    private fun updateJobList(job: BuildJob) {
-        val current = _buildJobs.value.toMutableList()
-        val idx = current.indexOfFirst { it.id == job.id }
-        if (idx != -1) {
-            current[idx] = job
-        } else {
-            current.add(0, job)
+    /**
+     * Checks if a real compiled APK exists in artifacts directory.
+     */
+    fun getExistingArtifactApk(projectName: String): File? {
+        val dir = artifactsDir ?: return null
+        val targetName = "${projectName.replace(" ", "_")}-debug.apk"
+        val file = File(dir, targetName)
+        if (file.exists() && file.length() > 1000) {
+            // Verify first 2 bytes are PK (0x50, 0x4B)
+            try {
+                file.inputStream().use {
+                    val b0 = it.read()
+                    val b1 = it.read()
+                    if (b0 == 0x50 && b1 == 0x4B) return file
+                }
+            } catch (_: Exception) {}
         }
-        _buildJobs.value = current
+        return null
     }
 }

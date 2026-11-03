@@ -39,8 +39,31 @@ fun ReconstructionScreen(
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Legal compliance notice (D4)
         item {
-            Spacer(modifier = Modifier.height(4.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = CleanOrange.copy(alpha = 0.15f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CleanOrange.copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Gavel, contentDescription = null, tint = CleanOrange, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Notice: Use only on apps you own or are authorized to analyze.",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CleanOrange
+                    )
+                }
+            }
+        }
+
+        item {
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = CleanSurface,
@@ -55,13 +78,13 @@ fun ReconstructionScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Magic App Rebuild",
+                                text = "Generate App Scaffold",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = TextMain
                             )
                             Text(
-                                text = "Reconstructed into 100% modern Jetpack Compose",
+                                text = "Synthesizes Jetpack Compose scaffold from audited APK evidence",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -86,7 +109,7 @@ fun ReconstructionScreen(
                         color = CleanBlue
                     )
                     Text(
-                        text = if (analysis != null) "Clean-room synthesis with modern Google recommended architecture" else "Pick an APK from the Home screen first",
+                        text = if (analysis != null) "Clean-room scaffold derived from manifest components" else "Pick an APK from the Home screen first",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -108,7 +131,7 @@ fun ReconstructionScreen(
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (progress.isReconstructing) "Rebuilding in Background..." else "Rebuild App Now", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(if (progress.isReconstructing) "Generating Scaffold..." else "Generate Scaffold", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                 }
             }
@@ -130,7 +153,7 @@ fun ReconstructionScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = progress.currentMessage.ifBlank { "Rebuilding app code..." },
+                                text = progress.currentMessage.ifBlank { "Synthesizing scaffold..." },
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = CleanBlue
@@ -155,7 +178,7 @@ fun ReconstructionScreen(
             }
         }
 
-        // Success / Ready Card
+        // Success / Ready Card (D1, D3)
         if (report != null && !progress.isReconstructing) {
             item {
                 Surface(
@@ -177,12 +200,19 @@ fun ReconstructionScreen(
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
-                                Text("Reconstruction Complete!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanGreen)
-                                Text("${report.generatedFilesCount} clean source files generated", fontSize = 12.sp, color = TextMuted)
+                                Text("Generated Scaffold Complete (${report.completionPercentage}%)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanGreen)
+                                Text("${report.generatedFilesCount} source files generated", fontSize = 12.sp, color = TextMuted)
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Note: Business logic, native libraries and obfuscated code are not recovered.",
+                            fontSize = 11.sp,
+                            color = TextSubtle
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         // Features List
                         report.implementedFeatures.take(3).forEach { feat ->
@@ -201,14 +231,14 @@ fun ReconstructionScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Button(
-                                onClick = { viewModel.triggerCloudBuild("DEBUG_APK") },
+                                onClick = { viewModel.navigateTo(ScreenDestination.CLOUD_BUILDER) },
                                 colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1f).height(48.dp).testTag("rec_build_apk_btn")
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Download APK", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("Cloud Build", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Button(
@@ -217,7 +247,7 @@ fun ReconstructionScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1f).height(48.dp).testTag("rec_open_editor_btn")
                             ) {
-                                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("View Code", fontSize = 13.sp)
                             }

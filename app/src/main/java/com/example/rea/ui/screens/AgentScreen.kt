@@ -2,11 +2,9 @@ package com.example.rea.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -22,10 +20,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.rea.data.model.*
+import com.example.rea.data.model.AgentMode
+import com.example.rea.data.model.AgentMessage
+import com.example.rea.data.model.MessageSender
 import com.example.rea.ui.viewmodel.ReaViewModel
 import com.example.ui.theme.*
 
@@ -35,9 +36,11 @@ fun AgentScreen(
     modifier: Modifier = Modifier
 ) {
     val messages by viewModel.agentService.messages.collectAsState()
+    val isThinking by viewModel.agentService.isAgentThinking.collectAsState()
+    val currentMode by viewModel.agentMode.collectAsState()
+    var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val context = LocalContext.current
-    var inputText by remember { mutableStateOf("") }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -49,53 +52,44 @@ fun AgentScreen(
         modifier = modifier
             .fillMaxSize()
             .background(CleanBg)
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 20.dp)
     ) {
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Quick 1-Tap Prompt Chips
-        val suggestions = listOf(
-            "✨ Make UI prettier & modern",
-            "📷 Rebuild camera screen",
-            "🔍 Explain how this app works",
-            "⚡ Check for errors & fix"
-        )
-
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
+        // Screen Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            items(suggestions) { sug ->
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = CleanSurface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
-                    modifier = Modifier.clickable {
-                        inputText = sug
-                    }
-                ) {
-                    Text(
-                        text = sug,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextMain,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                }
+            Column {
+                Text("AI Engineer Agent", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = TextMain)
+                Text(
+                    text = if (isThinking) "Thinking..." else "Active Mode: ${currentMode.name}",
+                    fontSize = 12.sp,
+                    color = if (isThinking) CleanBlue else TextMuted
+                )
+            }
+
+            IconButton(
+                onClick = { viewModel.agentService.clearHistory() },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear", tint = TextMuted)
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Messages List
+        // Chat Message List
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(messages.filter { it.sender != MessageSender.SYSTEM }) { msg ->
+            items(messages) { msg ->
                 val isUser = msg.sender == MessageSender.USER
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -104,8 +98,8 @@ fun AgentScreen(
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = if (isUser) CleanBlue else CleanSurface,
-                        border = if (!isUser) androidx.compose.foundation.BorderStroke(1.dp, CleanBorder) else null,
-                        modifier = Modifier.widthIn(max = 300.dp)
+                        border = if (isUser) null else androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                        modifier = Modifier.widthIn(max = 320.dp)
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
@@ -116,19 +110,84 @@ fun AgentScreen(
                                 fontWeight = if (isUser) FontWeight.SemiBold else FontWeight.Normal
                             )
 
+                            // Diff with preview and undo (A3, A5)
                             if (msg.proposedDiff != null) {
+                                val diff = msg.proposedDiff
+                                val oldLines = if (diff.originalSnippet.isBlank()) 0 else diff.originalSnippet.lines().size
+                                val newLines = diff.replacementSnippet.lines().size
+                                val previewSnippet = diff.replacementSnippet.lines().take(3).joinToString("\n")
+
                                 Spacer(modifier = Modifier.height(10.dp))
-                                Button(
-                                    onClick = {
-                                        viewModel.applyCodeDiff(msg.proposedDiff)
-                                        Toast.makeText(context, "Applied to ${msg.proposedDiff.filePath}!", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
+                                Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    modifier = Modifier.testTag("apply_code_diff_btn")
+                                    color = CleanBg,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Apply Code Changes", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(
+                                            text = "FILE: ${diff.filePath}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CleanBlue
+                                        )
+                                        Text(
+                                            text = "Lines: $oldLines -> $newLines",
+                                            fontSize = 10.sp,
+                                            color = TextMuted
+                                        )
+                                        Text(
+                                            text = previewSnippet + "\n...",
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = TextSubtle,
+                                            lineHeight = 12.sp
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                if (!msg.isDiffApplied) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.applyCodeDiff(diff, msg.id)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("apply_code_diff_btn")
+                                    ) {
+                                        Text("Apply Code Changes", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = CleanGreen.copy(alpha = 0.2f)
+                                        ) {
+                                            Text(
+                                                text = "Applied",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CleanGreen,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                viewModel.undoCodeDiff(msg.id)
+                                            },
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp).testTag("undo_code_diff_btn")
+                                        ) {
+                                            Text("Undo", fontSize = 10.sp, color = CleanRed)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -139,7 +198,7 @@ fun AgentScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Clean Input Bar
+        // Clean Input Bar with Thinking Indicator (C3)
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = CleanSurface,
@@ -157,9 +216,10 @@ fun AgentScreen(
                 TextField(
                     value = inputText,
                     onValueChange = { inputText = it },
+                    enabled = !isThinking,
                     placeholder = {
                         Text(
-                            text = "Ask AI to change anything...",
+                            text = if (isThinking) "Thinking..." else "Ask AI to change anything...",
                             fontSize = 13.sp,
                             color = TextMuted
                         )
@@ -179,16 +239,17 @@ fun AgentScreen(
 
                 IconButton(
                     onClick = {
-                        if (inputText.isNotBlank()) {
+                        if (inputText.isNotBlank() && !isThinking) {
                             val text = inputText
                             inputText = ""
                             viewModel.sendAgentPrompt(text)
                         }
                     },
+                    enabled = !isThinking && inputText.isNotBlank(),
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(CleanBlue)
+                        .background(if (!isThinking && inputText.isNotBlank()) CleanBlue else TextMuted.copy(alpha = 0.3f))
                         .testTag("agent_send_btn")
                 ) {
                     Icon(

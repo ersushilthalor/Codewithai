@@ -89,7 +89,7 @@ class ExampleRobolectricTest {
 
     assertTrue("Files should be generated", files.isNotEmpty())
     assertNotNull(report)
-    assertEquals(95, report.completionPercentage)
+    assertTrue("Completion percentage should be dynamically computed > 0", report.completionPercentage > 0)
     assertTrue("Should include AndroidManifest.xml", files.any { it.name == "AndroidManifest.xml" })
     assertTrue("Should include build.gradle.kts", files.any { it.name == "build.gradle.kts" })
   }

@@ -235,7 +235,7 @@ fun CodeWorkspaceScreen(
                         }
 
                         Button(
-                            onClick = { viewModel.triggerCloudBuild("DEBUG_APK") },
+                            onClick = { viewModel.navigateTo(ScreenDestination.CLOUD_BUILDER) },
                             colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),

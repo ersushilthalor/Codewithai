@@ -34,6 +34,7 @@ fun CloudBuilderScreen(
     val buildJobs by viewModel.builderService.buildJobs.collectAsState()
     val activeJob = buildJobs.firstOrNull()
     val project = viewModel.projectRepository.getCurrentProject()
+    val gitHubConfig by viewModel.gitHubConfig.collectAsState()
     val context = LocalContext.current
     var showLogs by remember { mutableStateOf(false) }
 
@@ -68,13 +69,13 @@ fun CloudBuilderScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Build & Install APK",
+                                text = "Cloud Build (GitHub Actions)",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = TextMain
                             )
                             Text(
-                                text = "Generates a real Android APK ready for your phone",
+                                text = "Builds real APK via GitHub Actions without requiring a PC",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -86,31 +87,39 @@ fun CloudBuilderScreen(
                                 .background(CleanGreen.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Android, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(24.dp))
+                            Icon(Icons.Default.CloudSync, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(24.dp))
                         }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "Target: ${project?.name ?: "No APK Loaded"}",
+                        text = "Target Project: ${project?.name ?: "No Project Loaded"}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = CleanBlue
                     )
                     Text(
-                        text = if (project != null) "Configured automatically with Android 15 & Gradle 8.9" else "Pick an APK from the Home screen first",
+                        text = if (gitHubConfig.isConnected) {
+                            "GitHub Connected: @${gitHubConfig.username}/${gitHubConfig.currentRepo ?: "reconstructed-app"}"
+                        } else {
+                            "Configure your GitHub Token in Settings to enable automated cloud compilation"
+                        },
                         fontSize = 12.sp,
-                        color = TextMuted
+                        color = if (gitHubConfig.isConnected) CleanGreen else CleanOrange
                     )
 
                     Spacer(modifier = Modifier.height(18.dp))
 
                     val isBuilding = activeJob?.status == BuildStatus.COMPILING || activeJob?.status == BuildStatus.VALIDATING || activeJob?.status == BuildStatus.PACKAGING
 
+                    // Default build option: GitHub Actions (F2)
                     Button(
-                        onClick = { viewModel.triggerCloudBuild("DEBUG_APK") },
-                        enabled = !isBuilding && project != null,
+                        onClick = {
+                            val repo = gitHubConfig.currentRepo?.substringAfterLast('/') ?: "reconstructed-app"
+                            viewModel.triggerGitHubBuild(gitHubConfig.username, repo)
+                        },
+                        enabled = !isBuilding && project != null && gitHubConfig.isConnected,
                         colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
@@ -121,10 +130,27 @@ fun CloudBuilderScreen(
                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            if (isBuilding) "Building in Cloud..." else "Compile APK (1-Tap)",
+                            if (isBuilding) "Building on GitHub Actions..." else "Build APK with GitHub Actions",
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp
+                            fontSize = 14.sp
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Secondary option: Export Project ZIP
+                    OutlinedButton(
+                        onClick = {
+                            val name = "${(project?.name ?: "project").replace("[^a-zA-Z0-9]".toRegex(), "")}-source.zip"
+                            exportApkLauncher.launch(name)
+                        },
+                        enabled = project != null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp).testTag("export_project_zip_btn")
+                    ) {
+                        Icon(Icons.Default.FolderZip, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save project ZIP", fontSize = 13.sp)
                     }
                 }
             }
@@ -139,7 +165,7 @@ fun CloudBuilderScreen(
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = CleanSurface,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBlue),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBlue.copy(alpha = 0.5f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -148,35 +174,41 @@ fun CloudBuilderScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Building APK...",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CleanBlue
-                                )
-                                Text(
-                                    text = "${activeJob.progressPercent}%",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CleanGreen
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = CleanBlue,
+                                        strokeWidth = 2.5.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text("Cloud Build in Progress", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                                }
+                                Text("${activeJob.progressPercent}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CleanBlue)
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Spacer(modifier = Modifier.height(12.dp))
                             LinearProgressIndicator(
                                 progress = { activeJob.progressPercent / 100f },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                                 color = CleanBlue,
-                                trackColor = CleanBorder
+                                trackColor = CleanSurfaceLight
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TerminalLogView(
+                                logs = activeJob.logs,
+                                modifier = Modifier.height(140.dp),
+                                title = "GitHub Actions Pipeline"
                             )
                         }
                     }
                 }
-            } else if (activeJob.status == BuildStatus.SUCCESS && activeJob.artifactName != null) {
+            } else if (activeJob.status == BuildStatus.SUCCESS) {
                 item {
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = CleanSurface,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanGreen),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanGreen.copy(alpha = 0.6f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(20.dp)) {
@@ -188,12 +220,12 @@ fun CloudBuilderScreen(
                                         .background(CleanGreen.copy(alpha = 0.2f)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Default.DownloadDone, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(24.dp))
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(24.dp))
                                 }
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Column {
-                                    Text("APK Ready to Install!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanGreen)
-                                    Text("Size: 15.5 MB • Verified Clean", fontSize = 12.sp, color = TextMuted)
+                                    Text("Build Succeeded!", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanGreen)
+                                    Text(activeJob.artifactName ?: "Debug APK ready", fontSize = 12.sp, color = TextMuted)
                                 }
                             }
 
@@ -201,7 +233,7 @@ fun CloudBuilderScreen(
 
                             Button(
                                 onClick = {
-                                    val name = activeJob.artifactName ?: "reconstructed-debug.apk"
+                                    val name = activeJob.artifactName ?: "app-debug.apk"
                                     exportApkLauncher.launch(name)
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
@@ -213,7 +245,7 @@ fun CloudBuilderScreen(
                             ) {
                                 Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Save Final APK to Device", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                                Text("Save APK", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))
@@ -222,7 +254,7 @@ fun CloudBuilderScreen(
                                 onClick = { showLogs = !showLogs },
                                 modifier = Modifier.align(Alignment.CenterHorizontally)
                             ) {
-                                Text(if (showLogs) "Hide Details" else "Show Build Details", fontSize = 12.sp, color = TextMuted)
+                                Text(if (showLogs) "Hide Details" else "Show Build Steps", fontSize = 12.sp, color = TextMuted)
                             }
 
                             if (showLogs) {
@@ -257,18 +289,10 @@ fun CloudBuilderScreen(
                                 }
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Column {
-                                    Text("Cloud Build Worker Not Available", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanOrange)
-                                    Text(activeJob.errorReason ?: "Configure worker in Settings to execute cloud builds", fontSize = 12.sp, color = TextMuted)
+                                    Text("Build Did Not Succeed", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanOrange)
+                                    Text(activeJob.errorReason ?: "Review build logs below", fontSize = 12.sp, color = TextMuted)
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            Text(
-                                text = "Heavy Gradle APK compilation requires a dedicated Linux build worker. You can configure your worker URL in Settings, or export the complete valid source code bundle (.zip) directly to your device storage:",
-                                fontSize = 12.sp,
-                                color = TextMain
-                            )
 
                             Spacer(modifier = Modifier.height(14.dp))
 
@@ -286,7 +310,7 @@ fun CloudBuilderScreen(
                             ) {
                                 Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Export Source Code Archive (.ZIP)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("Save project ZIP", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))

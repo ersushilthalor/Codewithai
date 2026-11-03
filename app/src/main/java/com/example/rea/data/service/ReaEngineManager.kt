@@ -38,10 +38,11 @@ class ReaEngineManager {
             cloudWorkerEndpoint = initialEndpoint,
             cloudWorkerToken = initialToken,
             mcpConnected = false,
-            nodeVersion = "v22.23.4 (Requires Worker)",
-            jdkVersion = "OpenJDK 17",
-            jadxVersion = "1.5.0",
-            apktoolVersion = "2.9.3",
+            nodeVersion = "",
+            jdkVersion = "",
+            jadxVersion = "",
+            apktoolVersion = "",
+            activeTools = emptyList(),
             logs = listOf(
                 if (initialEndpoint.isNotBlank()) {
                     "[INIT] Configured worker endpoint: $initialEndpoint. Ready to test connection."
@@ -109,6 +110,18 @@ class ReaEngineManager {
                 val latency = System.currentTimeMillis() - startTime
                 if (response.isSuccessful) {
                     val body = response.body?.string().orEmpty()
+                    var nodeV = ""
+                    var jdkV = ""
+                    var jadxV = ""
+                    var apktoolV = ""
+                    try {
+                        val bodyJson = JSONObject(body)
+                        nodeV = bodyJson.optString("nodeVersion", "")
+                        jdkV = bodyJson.optString("jdkVersion", "")
+                        jadxV = bodyJson.optString("jadxVersion", "")
+                        apktoolV = bodyJson.optString("apktoolVersion", "")
+                    } catch (_: Exception) {}
+
                     logs.add("[SUCCESS] Handshake verified in ${latency}ms (HTTP ${response.code}).")
                     logs.add("[MCP] Discovering available tools at $endpoint/mcp/tools...")
 
@@ -122,7 +135,11 @@ class ReaEngineManager {
                         progressPercent = 100,
                         cloudWorkerEndpoint = endpoint,
                         cloudWorkerToken = token,
-                        activeTools = discoveredTools.ifEmpty { _engineState.value.activeTools },
+                        nodeVersion = nodeV,
+                        jdkVersion = jdkV,
+                        jadxVersion = jadxV,
+                        apktoolVersion = apktoolV,
+                        activeTools = discoveredTools,
                         logs = logs
                     )
                 } else {

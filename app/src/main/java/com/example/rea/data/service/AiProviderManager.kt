@@ -1,5 +1,7 @@
 package com.example.rea.data.service
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.example.BuildConfig
 import com.example.rea.data.model.AiProvider
 import com.example.rea.data.model.ProviderType
@@ -28,13 +30,17 @@ data class ProviderPreset(
     val keyHint: String
 )
 
-class AiProviderManager {
+class AiProviderManager(private val context: Context? = null) {
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    private val prefs: SharedPreferences? by lazy {
+        context?.getSharedPreferences("rea_ai_providers", Context.MODE_PRIVATE)
+    }
 
     companion object {
         val AVAILABLE_PRESETS = listOf(
@@ -60,9 +66,9 @@ class AiProviderManager {
                 type = ProviderType.CLAUDE,
                 name = "Anthropic Claude",
                 defaultBaseUrl = "https://api.anthropic.com/v1",
-                defaultAnalysisModel = "claude-3-7-sonnet-20250219",
-                defaultCodeGenModel = "claude-3-5-sonnet-20241022",
-                description = "Claude 3.7 & 3.5 Sonnet architecture analysis",
+                defaultAnalysisModel = "claude-opus-5-5",
+                defaultCodeGenModel = "claude-sonnet-5-5",
+                description = "Claude Opus 5.5 & Sonnet 5.5 architecture models",
                 keyHint = "sk-ant-..."
             ),
             ProviderPreset(
@@ -109,10 +115,13 @@ class AiProviderManager {
         }
     }
 
-    private val _providers = MutableStateFlow<List<AiProvider>>(initializeProviders())
+    private val _providers = MutableStateFlow<List<AiProvider>>(loadInitialProviders())
     val providers: StateFlow<List<AiProvider>> = _providers.asStateFlow()
 
-    private fun initializeProviders(): List<AiProvider> {
+    private fun loadInitialProviders(): List<AiProvider> {
+        val persisted = loadFromPreferences()
+        if (persisted.isNotEmpty()) return persisted
+
         val geminiKey = try {
             val k = BuildConfig.GEMINI_API_KEY
             if (k.isNotBlank() && k != "placeholder" && k != "\"placeholder\"" && k != "default") k else ""
@@ -161,6 +170,94 @@ class AiProviderManager {
         )
     }
 
+    private fun loadFromPreferences(): List<AiProvider> {
+        val jsonStr = prefs?.getString("providers_data", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(jsonStr)
+            val list = mutableListOf<AiProvider>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val encKeysArr = obj.optJSONArray("encryptedApiKeys") ?: JSONArray()
+                val decryptedKeys = mutableListOf<String>()
+                for (k in 0 until encKeysArr.length()) {
+                    val enc = encKeysArr.getString(k)
+                    val dec = KeyStoreCrypto.decrypt(enc)
+                    if (!dec.isNullOrBlank()) {
+                        decryptedKeys.add(dec)
+                    }
+                }
+
+                val modelsArr = obj.optJSONArray("availableModels") ?: JSONArray()
+                val availModels = mutableListOf<String>()
+                for (m in 0 until modelsArr.length()) {
+                    availModels.add(modelsArr.getString(m))
+                }
+
+                list.add(
+                    AiProvider(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        type = ProviderType.valueOf(obj.getString("type")),
+                        apiKey = decryptedKeys.firstOrNull() ?: "",
+                        apiKeys = decryptedKeys,
+                        activeKeyIndex = obj.optInt("activeKeyIndex", 0),
+                        autoSwitchOnLimit = obj.optBoolean("autoSwitchOnLimit", true),
+                        baseUrl = obj.getString("baseUrl"),
+                        analysisModel = obj.optString("analysisModel", ""),
+                        codeGenModel = obj.optString("codeGenModel", ""),
+                        availableModels = availModels,
+                        temperature = obj.optDouble("temperature", 0.2).toFloat(),
+                        maxTokens = obj.optInt("maxTokens", 4096),
+                        supportsToolCalling = obj.optBoolean("supportsToolCalling", true),
+                        isDefault = obj.optBoolean("isDefault", false),
+                        latencyMs = obj.optLong("latencyMs", 0L),
+                        lastTestedStatus = obj.optString("lastTestedStatus", "Untested")
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun persistProviders() {
+        val p = prefs ?: return
+        try {
+            val arr = JSONArray()
+            _providers.value.forEach { prov ->
+                val obj = JSONObject()
+                obj.put("id", prov.id)
+                obj.put("name", prov.name)
+                obj.put("type", prov.type.name)
+                obj.put("baseUrl", prov.baseUrl)
+                obj.put("analysisModel", prov.analysisModel)
+                obj.put("codeGenModel", prov.codeGenModel)
+                obj.put("activeKeyIndex", prov.activeKeyIndex)
+                obj.put("autoSwitchOnLimit", prov.autoSwitchOnLimit)
+                obj.put("temperature", prov.temperature.toDouble())
+                obj.put("maxTokens", prov.maxTokens)
+                obj.put("supportsToolCalling", prov.supportsToolCalling)
+                obj.put("isDefault", prov.isDefault)
+                obj.put("latencyMs", prov.latencyMs)
+                obj.put("lastTestedStatus", prov.lastTestedStatus)
+
+                val encKeys = JSONArray()
+                prov.apiKeys.forEach { key ->
+                    encKeys.put(KeyStoreCrypto.encrypt(key))
+                }
+                obj.put("encryptedApiKeys", encKeys)
+
+                val mArr = JSONArray()
+                prov.availableModels.forEach { mArr.put(it) }
+                obj.put("availableModels", mArr)
+
+                arr.put(obj)
+            }
+            p.edit().putString("providers_data", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
     fun getDefaultProvider(): AiProvider {
         return _providers.value.firstOrNull { it.isDefault } ?: _providers.value.first()
     }
@@ -169,6 +266,19 @@ class AiProviderManager {
         _providers.value = _providers.value.map {
             it.copy(isDefault = it.id == id)
         }
+        persistProviders()
+    }
+
+    fun updateProviderModels(providerId: String, analysisModel: String, codeGenModel: String) {
+        _providers.value = _providers.value.map {
+            if (it.id == providerId) {
+                it.copy(
+                    analysisModel = analysisModel.trim(),
+                    codeGenModel = codeGenModel.trim()
+                )
+            } else it
+        }
+        persistProviders()
     }
 
     fun addFromPreset(preset: ProviderPreset, initialKey: String, additionalKeys: List<String> = emptyList()) {
@@ -192,6 +302,7 @@ class AiProviderManager {
         )
 
         _providers.value = _providers.value + newProvider
+        persistProviders()
     }
 
     fun addKeyToProvider(providerId: String, newKey: String) {
@@ -209,6 +320,7 @@ class AiProviderManager {
                 )
             } else p
         }
+        persistProviders()
     }
 
     fun removeKeyFromProvider(providerId: String, index: Int) {
@@ -226,12 +338,14 @@ class AiProviderManager {
                 } else p
             } else p
         }
+        persistProviders()
     }
 
     fun toggleAutoSwitch(providerId: String, enabled: Boolean) {
         _providers.value = _providers.value.map { p ->
             if (p.id == providerId) p.copy(autoSwitchOnLimit = enabled) else p
         }
+        persistProviders()
     }
 
     fun rotateToNextKey(providerId: String): String {
@@ -246,6 +360,7 @@ class AiProviderManager {
                 )
             } else p
         }
+        persistProviders()
         return nextKey
     }
 
@@ -257,18 +372,20 @@ class AiProviderManager {
                 if (index == 0) p.copy(isDefault = true) else p
             }
         }
+        persistProviders()
     }
 
     /**
      * Executes a real HTTP ping against the provider's API.
-     * Validates credentials and measures real latency.
+     * C4: Fetches real model list via GET /models and saves it. Free ping for all providers.
+     * C5: Never logs URLs or keys.
      */
     suspend fun testConnection(id: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         val p = _providers.value.firstOrNull { it.id == id } ?: return@withContext false to "Provider not found"
         val key = p.currentKey.trim()
         if (key.isBlank()) {
             val status = "No active API Key configured"
-            updateProviderStatus(id, 0, status)
+            updateProviderStatus(id, 0, status, emptyList())
             return@withContext false to status
         }
 
@@ -277,37 +394,20 @@ class AiProviderManager {
             val request = when (p.type) {
                 ProviderType.GEMINI -> {
                     Request.Builder()
-                        .url("https://generativelanguage.googleapis.com/v1beta/models?key=$key")
-                        .get()
-                        .build()
-                }
-                ProviderType.OPENAI -> {
-                    Request.Builder()
-                        .url("${p.baseUrl}/models")
-                        .header("Authorization", "Bearer $key")
+                        .url("https://generativelanguage.googleapis.com/v1beta/models")
+                        .header("x-goog-api-key", key)
                         .get()
                         .build()
                 }
                 ProviderType.CLAUDE -> {
-                    // Test Anthropic with minimal message request
-                    val body = JSONObject().apply {
-                        put("model", p.analysisModel)
-                        put("max_tokens", 10)
-                        put("messages", JSONArray().put(JSONObject().apply {
-                            put("role", "user")
-                            put("content", "ping")
-                        }))
-                    }.toString().toRequestBody("application/json".toMediaType())
-
                     Request.Builder()
-                        .url("${p.baseUrl}/messages")
+                        .url("https://api.anthropic.com/v1/models")
                         .header("x-api-key", key)
                         .header("anthropic-version", "2023-06-01")
-                        .post(body)
+                        .get()
                         .build()
                 }
                 else -> {
-                    // OpenRouter, Groq, DeepSeek, Mistral (OpenAI compatible)
                     Request.Builder()
                         .url("${p.baseUrl}/models")
                         .header("Authorization", "Bearer $key")
@@ -318,44 +418,77 @@ class AiProviderManager {
 
             httpClient.newCall(request).execute().use { response ->
                 val latency = System.currentTimeMillis() - startTime
+                val bodyStr = response.body?.string().orEmpty()
                 if (response.isSuccessful) {
-                    val status = "Connected (${latency}ms, Key ${p.activeKeyIndex + 1}/${p.apiKeys.size})"
-                    updateProviderStatus(id, latency, status)
+                    val models = parseModelsList(p.type, bodyStr)
+                    val status = "Connected (${latency}ms, ${models.size} models, Key ${p.activeKeyIndex + 1}/${p.apiKeys.size})"
+                    updateProviderStatus(id, latency, status, models)
                     return@withContext true to status
                 } else {
                     val code = response.code
-                    val errorBody = response.body?.string().orEmpty()
                     val status = when (code) {
                         401, 403 -> "Authentication Failed (Invalid Key, HTTP $code)"
                         429 -> "Rate Limit Exceeded (HTTP 429)"
-                        else -> "API Error (HTTP $code): ${errorBody.take(100)}"
+                        else -> "API Error (HTTP $code): ${bodyStr.take(100)}"
                     }
-                    updateProviderStatus(id, latency, status)
+                    updateProviderStatus(id, latency, status, emptyList())
                     return@withContext false to status
                 }
             }
         } catch (e: Exception) {
             val latency = System.currentTimeMillis() - startTime
             val status = "Connection Error: ${e.localizedMessage ?: e.javaClass.simpleName}"
-            updateProviderStatus(id, latency, status)
+            updateProviderStatus(id, latency, status, emptyList())
             return@withContext false to status
         }
     }
 
-    private fun updateProviderStatus(id: String, latencyMs: Long, status: String) {
+    private fun parseModelsList(type: ProviderType, jsonStr: String): List<String> {
+        val models = mutableListOf<String>()
+        try {
+            val obj = JSONObject(jsonStr)
+            when (type) {
+                ProviderType.GEMINI -> {
+                    val arr = obj.optJSONArray("models") ?: JSONArray()
+                    for (i in 0 until arr.length()) {
+                        val mName = arr.getJSONObject(i).optString("name").removePrefix("models/")
+                        if (mName.isNotBlank()) models.add(mName)
+                    }
+                }
+                else -> {
+                    val arr = obj.optJSONArray("data") ?: JSONArray()
+                    for (i in 0 until arr.length()) {
+                        val mId = arr.getJSONObject(i).optString("id")
+                        if (mId.isNotBlank()) models.add(mId)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return models
+    }
+
+    private fun updateProviderStatus(id: String, latencyMs: Long, status: String, models: List<String>) {
         _providers.value = _providers.value.map {
-            if (it.id == id) it.copy(latencyMs = latencyMs, lastTestedStatus = status) else it
+            if (it.id == id) {
+                val newModels = if (models.isNotEmpty()) models else it.availableModels
+                it.copy(latencyMs = latencyMs, lastTestedStatus = status, availableModels = newModels)
+            } else it
         }
+        persistProviders()
     }
 
     /**
      * Executes real inference request to the configured AI provider.
-     * Supports automatic key rotation on HTTP 429.
+     * C1: Accepts history: List<Pair<String,String>> (role "user"/"assistant", text)
+     * C5: Uses x-goog-api-key header for Gemini, never query param or logs.
+     * C6: Supports imageBase64 (JPEG Base64). Rejects vision on unsupported providers.
      */
     suspend fun generateAiResponse(
         provider: AiProvider,
         systemPrompt: String,
-        userPrompt: String
+        userPrompt: String,
+        history: List<Pair<String, String>> = emptyList(),
+        imageBase64: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         var activeProv = provider
         var key = activeProv.currentKey.trim()
@@ -366,6 +499,21 @@ class AiProviderManager {
             )
         }
 
+        // Vision support check (C6)
+        if (imageBase64 != null) {
+            when (activeProv.type) {
+                ProviderType.DEEPSEEK, ProviderType.GROQ -> {
+                    return@withContext Result.failure(
+                        IllegalArgumentException("This provider does not support images. Switch to Gemini, OpenAI or Claude.")
+                    )
+                }
+                else -> {}
+            }
+        }
+
+        // Keep last 10 turns of history (C1)
+        val trimmedHistory = history.takeLast(10)
+
         var attempts = 0
         val maxAttempts = activeProv.apiKeys.size.coerceAtLeast(1)
 
@@ -373,9 +521,9 @@ class AiProviderManager {
             attempts++
             try {
                 val responseText = when (activeProv.type) {
-                    ProviderType.GEMINI -> executeGemini(activeProv, key, systemPrompt, userPrompt)
-                    ProviderType.CLAUDE -> executeClaude(activeProv, key, systemPrompt, userPrompt)
-                    else -> executeOpenAiCompatible(activeProv, key, systemPrompt, userPrompt)
+                    ProviderType.GEMINI -> executeGemini(activeProv, key, systemPrompt, userPrompt, trimmedHistory, imageBase64)
+                    ProviderType.CLAUDE -> executeClaude(activeProv, key, systemPrompt, userPrompt, trimmedHistory, imageBase64)
+                    else -> executeOpenAiCompatible(activeProv, key, systemPrompt, userPrompt, trimmedHistory, imageBase64)
                 }
                 return@withContext Result.success(responseText)
             } catch (e: HttpException) {
@@ -394,20 +542,49 @@ class AiProviderManager {
         return@withContext Result.failure(IOException("All available API keys for ${provider.name} failed or were rate-limited."))
     }
 
-    private fun executeGemini(provider: AiProvider, key: String, systemPrompt: String, userPrompt: String): String {
+    private fun executeGemini(
+        provider: AiProvider,
+        key: String,
+        systemPrompt: String,
+        userPrompt: String,
+        history: List<Pair<String, String>>,
+        imageBase64: String?
+    ): String {
         val model = provider.codeGenModel.ifBlank { "gemini-2.5-flash" }
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$key"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+
+        val contents = JSONArray()
+
+        // History: map roles "user" / "model"
+        history.forEach { (role, text) ->
+            val geminiRole = if (role == "assistant" || role == "model") "model" else "user"
+            contents.put(JSONObject().apply {
+                put("role", geminiRole)
+                put("parts", JSONArray().put(JSONObject().put("text", text)))
+            })
+        }
+
+        // Final turn
+        val currentParts = JSONArray()
+        if (imageBase64 != null) {
+            currentParts.put(JSONObject().apply {
+                put("inline_data", JSONObject().apply {
+                    put("mime_type", "image/jpeg")
+                    put("data", imageBase64)
+                })
+            })
+        }
+        currentParts.put(JSONObject().put("text", userPrompt))
+
+        contents.put(JSONObject().apply {
+            put("role", "user")
+            put("parts", currentParts)
+        })
 
         val root = JSONObject().apply {
             if (systemPrompt.isNotBlank()) {
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().put("text", systemPrompt)))
-                })
-            }
-            val contents = JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))
                 })
             }
             put("contents", contents)
@@ -419,6 +596,7 @@ class AiProviderManager {
 
         val request = Request.Builder()
             .url(url)
+            .header("x-goog-api-key", key)
             .post(root.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -438,18 +616,51 @@ class AiProviderManager {
         }
     }
 
-    private fun executeOpenAiCompatible(provider: AiProvider, key: String, systemPrompt: String, userPrompt: String): String {
+    private fun executeOpenAiCompatible(
+        provider: AiProvider,
+        key: String,
+        systemPrompt: String,
+        userPrompt: String,
+        history: List<Pair<String, String>>,
+        imageBase64: String?
+    ): String {
         val model = provider.codeGenModel.ifBlank { "gpt-4o-mini" }
         val url = "${provider.baseUrl}/chat/completions"
 
-        val messages = JSONArray().apply {
-            if (systemPrompt.isNotBlank()) {
+        val messages = JSONArray()
+        if (systemPrompt.isNotBlank()) {
+            messages.put(JSONObject().apply {
+                put("role", "system")
+                put("content", systemPrompt)
+            })
+        }
+
+        history.forEach { (role, text) ->
+            val openAiRole = if (role == "model") "assistant" else role
+            messages.put(JSONObject().apply {
+                put("role", openAiRole)
+                put("content", text)
+            })
+        }
+
+        // Final turn
+        if (imageBase64 != null) {
+            val contentArr = JSONArray().apply {
                 put(JSONObject().apply {
-                    put("role", "system")
-                    put("content", systemPrompt)
+                    put("type", "image_url")
+                    put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$imageBase64"))
+                })
+                put(JSONObject().apply {
+                    put("type", "text")
+                    put("text", userPrompt)
                 })
             }
-            put(JSONObject().apply {
+            messages.put(JSONObject().apply {
+                put("role", "user")
+                put("content", contentArr)
+            })
+        } else {
+            messages.put(JSONObject().apply {
                 put("role", "user")
                 put("content", userPrompt)
             })
@@ -479,12 +690,54 @@ class AiProviderManager {
         }
     }
 
-    private fun executeClaude(provider: AiProvider, key: String, systemPrompt: String, userPrompt: String): String {
-        val model = provider.codeGenModel.ifBlank { "claude-3-5-sonnet-20241022" }
+    private fun executeClaude(
+        provider: AiProvider,
+        key: String,
+        systemPrompt: String,
+        userPrompt: String,
+        history: List<Pair<String, String>>,
+        imageBase64: String?
+    ): String {
+        val model = provider.codeGenModel.ifBlank { "claude-sonnet-5-5" }
         val url = "${provider.baseUrl}/messages"
 
-        val messages = JSONArray().apply {
-            put(JSONObject().apply {
+        val messages = JSONArray()
+
+        // Anthropic messages must alternate starting with user
+        var expectedRole = "user"
+        history.forEach { (rawRole, text) ->
+            val role = if (rawRole == "model" || rawRole == "assistant") "assistant" else "user"
+            if (role == expectedRole) {
+                messages.put(JSONObject().apply {
+                    put("role", role)
+                    put("content", text)
+                })
+                expectedRole = if (role == "user") "assistant" else "user"
+            }
+        }
+
+        // Final user turn
+        if (imageBase64 != null) {
+            val contentArr = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("type", "image")
+                    put("source", JSONObject().apply {
+                        put("type", "base64")
+                        put("media_type", "image/jpeg")
+                        put("data", imageBase64)
+                    })
+                })
+                put(JSONObject().apply {
+                    put("type", "text")
+                    put("text", userPrompt)
+                })
+            }
+            messages.put(JSONObject().apply {
+                put("role", "user")
+                put("content", contentArr)
+            })
+        } else {
+            messages.put(JSONObject().apply {
                 put("role", "user")
                 put("content", userPrompt)
             })

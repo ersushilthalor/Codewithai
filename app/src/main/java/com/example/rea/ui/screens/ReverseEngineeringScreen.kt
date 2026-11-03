@@ -37,6 +37,7 @@ fun ReverseEngineeringScreen(
     val analysis by viewModel.currentAnalysis.collectAsState()
     val progress by viewModel.analysisProgress.collectAsState()
     val context = LocalContext.current
+    val app = analysis
 
     val apkPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -79,30 +80,41 @@ fun ReverseEngineeringScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = analysis?.appName ?: "No App Selected",
+                                    text = app?.appName ?: "No App Selected",
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = TextMain
                                 )
                                 Text(
-                                    text = analysis?.packageName ?: "Tap 'Change APK' below",
+                                    text = app?.packageName ?: "Tap 'Change APK' below",
                                     fontSize = 12.sp,
                                     color = TextMuted
                                 )
                             }
                         }
 
+                        val hasHighRisk = app != null && app.securityFindings.any { it.severity == "CRITICAL" || it.severity == "HIGH" }
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = CleanGreen.copy(alpha = 0.15f)
+                            color = if (hasHighRisk) CleanOrange.copy(alpha = 0.15f) else CleanGreen.copy(alpha = 0.15f)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(14.dp))
+                                Icon(
+                                    imageVector = if (hasHighRisk) Icons.Default.Warning else Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = if (hasHighRisk) CleanOrange else CleanGreen,
+                                    modifier = Modifier.size(14.dp)
+                                )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Verified Safe", fontSize = 11.sp, color = CleanGreen, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = if (app == null) "Ready" else if (hasHighRisk) "Flagged" else "Parsed",
+                                    fontSize = 11.sp,
+                                    color = if (hasHighRisk) CleanOrange else CleanGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -159,7 +171,29 @@ fun ReverseEngineeringScreen(
             }
         }
 
-        val app = analysis
+        // Legal & Authorization Notice (D4)
+        item {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = CleanSurfaceLight,
+                border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Notice: Use only on apps you own or are authorized to analyze.",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                }
+            }
+        }
+
         if (app != null) {
             // Key Highlights Cards
             item {
@@ -177,7 +211,7 @@ fun ReverseEngineeringScreen(
 
                     HighlightBox(
                         title = "Code Base",
-                        value = "Jetpack Compose",
+                        value = app.detectedFrameworks.firstOrNull() ?: "Android Native",
                         icon = Icons.Default.Code,
                         color = CleanIndigo,
                         modifier = Modifier.weight(1f)
@@ -185,7 +219,7 @@ fun ReverseEngineeringScreen(
 
                     HighlightBox(
                         title = "Compatibility",
-                        value = "Android 8 - 15",
+                        value = "API ${app.minSdk}-${app.targetSdk}",
                         icon = Icons.Default.CheckCircle,
                         color = CleanGreen,
                         modifier = Modifier.weight(1f)
@@ -193,9 +227,108 @@ fun ReverseEngineeringScreen(
                 }
             }
 
+            // Technical Details Card (B3, B6)
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = CleanSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Technical Details", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        val sizeStr = if (app.apkSizeBytes > 1024 * 1024) String.format("%.1f MB", app.apkSizeBytes / (1024.0 * 1024.0)) else "${app.apkSizeBytes / 1024} KB"
+
+                        DetailRow("Version", "${app.versionName} (${app.versionCode})")
+                        DetailRow("Compile SDK", if (app.compileSdk > 0) "API ${app.compileSdk}" else "n/a")
+                        DetailRow("File Size", sizeStr)
+                        DetailRow("SHA-256", app.sha256.take(16) + "...")
+                        DetailRow("Signing", app.signingStatus)
+                        if (!app.signerCertSha256.isNullOrBlank()) {
+                            DetailRow("Signer Cert SHA", app.signerCertSha256.take(16) + "...")
+                        }
+                        DetailRow("Debuggable", if (app.debuggable) "Yes (warning)" else "No")
+                        DetailRow("Cleartext Traffic", if (app.usesCleartextTraffic) "Allowed (warning)" else "Disallowed")
+                        DetailRow("Allow Backup", if (app.allowBackup) "True" else "False")
+                        if (app.obfuscationLevel.isNotBlank()) {
+                            DetailRow("Obfuscation", app.obfuscationLevel)
+                        }
+                    }
+                }
+            }
+
+            // Limitations / Warnings list if any
+            if (app.limitationsList.isNotEmpty()) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = CleanOrange.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanOrange.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = CleanOrange, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Analysis Limitations", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = CleanOrange)
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            app.limitationsList.forEach { item ->
+                                Text("• $item", fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(vertical = 2.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Security Audit Findings (B8)
+            if (app.securityFindings.isNotEmpty()) {
+                item {
+                    Text("Security Audit (Local Heuristics)", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                }
+
+                items(app.securityFindings) { finding ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = CleanSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val severityColor = when (finding.severity.uppercase()) {
+                                    "CRITICAL", "HIGH" -> CleanOrange
+                                    "MEDIUM" -> CleanOrange
+                                    else -> CleanBlue
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = severityColor.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = finding.severity,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = severityColor,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(finding.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextMain)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(finding.reason, fontSize = 11.sp, color = TextMuted)
+                        }
+                    }
+                }
+            }
+
             // Screens Found
             item {
-                Text("Screens in this App", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Screens in this App (${app.activities.size})", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
             }
 
             items(app.activities) { act ->
@@ -244,10 +377,10 @@ fun ReverseEngineeringScreen(
             // Permissions Found
             item {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text("Features & Permissions", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                Text("Features & Permissions (${app.permissions.size})", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
             }
 
-            items(app.permissions.take(4)) { perm ->
+            items(app.permissions.take(8)) { perm ->
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = CleanSurface,
@@ -346,5 +479,19 @@ fun HighlightBox(
             Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextMain)
             Text(title, fontSize = 10.sp, color = TextMuted)
         }
+    }
+}
+
+@Composable
+fun DetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 12.sp, color = TextMuted)
+        Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextMain)
     }
 }
