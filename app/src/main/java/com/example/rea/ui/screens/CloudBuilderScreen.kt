@@ -236,6 +236,79 @@ fun CloudBuilderScreen(
                         }
                     }
                 }
+            } else if (activeJob.status == BuildStatus.FAILED) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = CleanSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanOrange.copy(alpha = 0.6f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .background(CleanOrange.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Info, contentDescription = null, tint = CleanOrange, modifier = Modifier.size(24.dp))
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column {
+                                    Text("Cloud Build Worker Not Available", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = CleanOrange)
+                                    Text(activeJob.errorReason ?: "Configure worker in Settings to execute cloud builds", fontSize = 12.sp, color = TextMuted)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Text(
+                                text = "Heavy Gradle APK compilation requires a dedicated Linux build worker. You can configure your worker URL in Settings, or export the complete valid source code bundle (.zip) directly to your device storage:",
+                                fontSize = 12.sp,
+                                color = TextMain
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Button(
+                                onClick = {
+                                    val name = "${(project?.name ?: "app").replace("[^a-zA-Z0-9]".toRegex(), "")}-source-bundle.zip"
+                                    exportApkLauncher.launch(name)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("export_source_bundle_btn")
+                            ) {
+                                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Export Source Code Archive (.ZIP)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            TextButton(
+                                onClick = { showLogs = !showLogs },
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            ) {
+                                Text(if (showLogs) "Hide Build Logs" else "View Build Logs", fontSize = 12.sp, color = TextMuted)
+                            }
+
+                            if (showLogs) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                TerminalLogView(
+                                    logs = activeJob.logs,
+                                    modifier = Modifier.height(140.dp),
+                                    title = "Build Logs"
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 

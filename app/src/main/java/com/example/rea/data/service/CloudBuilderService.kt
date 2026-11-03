@@ -2,45 +2,39 @@ package com.example.rea.data.service
 
 import com.example.rea.data.model.BuildJob
 import com.example.rea.data.model.BuildStatus
-import kotlinx.coroutines.delay
+import com.example.rea.data.model.Project
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class CloudBuilderService {
-    private val _buildJobs = MutableStateFlow<List<BuildJob>>(
-        listOf(
-            BuildJob(
-                id = "build_job_8192",
-                projectId = "proj_auracam_rec",
-                projectName = "AuraCam Pro (Reconstructed)",
-                buildType = "DEBUG_APK",
-                status = BuildStatus.SUCCESS,
-                logs = listOf(
-                    "[STEP 1/11] Validating project directory and AndroidManifest.xml -> OK",
-                    "[STEP 2/11] Detecting Gradle 8.9 wrapper & Kotlin 2.2.10 configuration -> OK",
-                    "[STEP 3/11] Resolving dependencies against Maven Central & Google repository...",
-                    "[STEP 4/11] Configuring Android SDK 36 (compileSdk=36, buildTools=36.0.0)...",
-                    "[STEP 5/11] Executing task: ':app:compileDebugKotlin' [UP-TO-DATE]",
-                    "[STEP 6/11] Executing task: ':app:processDebugResources' [OK]",
-                    "[STEP 7/11] Running JVM unit tests: 4 tests executed, 0 failures [PASSED]",
-                    "[STEP 8/11] Assembling APK: ':app:packageDebug' -> Generated app-debug.apk",
-                    "[STEP 9/11] Verifying output artifact integrity (Size: 14.8 MB, Magic: 0x504B0304)",
-                    "[STEP 10/11] Inspecting APK signing: Android Debug Certificate verified (SHA256: 3c9b...)",
-                    "[STEP 11/11] Uploading build artifact to GitHub Actions / S3 artifact storage -> SUCCESS"
-                ),
-                artifactName = "AuraCam-debug-v1.0.0.apk",
-                artifactSizeBytes = 15_518_976L,
-                artifactSha256 = "3c9b1a8f4e2d7c0b5a6f8e9d1c2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c0a",
-                startedAt = System.currentTimeMillis() - 3600_000L,
-                finishedAt = System.currentTimeMillis() - 3550_000L,
-                progressPercent = 100
-            )
-        )
-    )
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    private val _buildJobs = MutableStateFlow<List<BuildJob>>(emptyList())
     val buildJobs: StateFlow<List<BuildJob>> = _buildJobs.asStateFlow()
 
+    /**
+     * Executes an actual build operation.
+     * If a remote build worker endpoint is configured, dispatches a real build request.
+     * If no worker is configured, reports NOT CONFIGURED honestly with guidance.
+     */
     suspend fun startBuild(
         projectId: String,
         projectName: String,
@@ -48,70 +42,151 @@ class CloudBuilderService {
         appId: String = "com.aistudio.reconstructed.app",
         versionCode: Int = 1,
         versionName: String = "1.0.0",
+        workerEndpoint: String = "",
+        workerToken: String = "",
         onLog: (log: String, progress: Int) -> Unit
-    ): BuildJob {
+    ): BuildJob = withContext(Dispatchers.IO) {
         val jobId = "build_" + UUID.randomUUID().toString().take(8)
+        val logs = mutableListOf<String>()
+
+        fun addLog(msg: String, pct: Int) {
+            logs.add(msg)
+            onLog(msg, pct)
+        }
+
+        addLog("[INIT] Initializing build request for project: $projectName ($appId)", 10)
+
         val initialJob = BuildJob(
             id = jobId,
             projectId = projectId,
             projectName = projectName,
             buildType = buildType,
             status = BuildStatus.VALIDATING,
-            logs = listOf("[INIT] Starting remote cloud build for $projectName..."),
+            logs = logs.toList(),
             startedAt = System.currentTimeMillis(),
-            progressPercent = 5
+            progressPercent = 10
         )
+        updateJobList(initialJob)
 
-        val updatedList = _buildJobs.value.toMutableList()
-        updatedList.add(0, initialJob)
-        _buildJobs.value = updatedList
+        val endpoint = workerEndpoint.trim()
 
-        val steps = listOf(
-            "[1/11] Validating project directory structure & AndroidManifest.xml" to 10,
-            "[2/11] Detecting Gradle wrapper version 8.9 & Kotlin 2.2.10 toolchain" to 20,
-            "[3/11] Resolving MavenCentral dependencies: Compose BOM, CameraX, Coroutines" to 30,
-            "[4/11] Validating Android SDK 36 and platform API headers" to 42,
-            "[5/11] Compiling Kotlin source files with KSP symbol processors" to 58,
-            "[6/11] Running unit tests and Robolectric test suite" to 70,
-            "[7/11] Merging DEX files with D8 compiler" to 82,
-            "[8/11] Packaging output APK container and aligning zip entries" to 90,
-            "[9/11] Verifying APK signature block v2 + v3" to 94,
-            "[10/11] Inspecting output package metadata ($appId, vc=$versionCode, vn=$versionName)" to 98,
-            "[11/11] Generating signed artifact and preparing download stream" to 100
-        )
+        if (endpoint.isBlank() || endpoint.contains(".internal")) {
+            addLog("[VALIDATION] Checking build runner availability...", 30)
+            addLog("[NOT CONFIGURED] No remote Linux build worker endpoint is configured.", 50)
+            addLog("[REQUIREMENT] Gradle build execution (task ':app:assembleDebug') requires a Linux worker environment with Android SDK 36 and JDK 17.", 70)
+            addLog("[INSTRUCTION] Please configure your REA Worker Endpoint in Settings, or export the reconstructed project code bundle directly to storage.", 90)
+            addLog("[STOPPED] Build stopped: Remote worker not configured.", 100)
 
-        val currentLogs = initialJob.logs.toMutableList()
-
-        for ((stepLog, progress) in steps) {
-            currentLogs.add(stepLog)
-            onLog(stepLog, progress)
-            val intermediate = initialJob.copy(
-                status = if (progress < 90) BuildStatus.COMPILING else BuildStatus.PACKAGING,
-                logs = currentLogs.toList(),
-                progressPercent = progress
+            val failedJob = initialJob.copy(
+                status = BuildStatus.FAILED,
+                logs = logs.toList(),
+                errorReason = "Build worker not configured. Configure REA Builder URL in Settings to execute cloud Gradle tasks.",
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100
             )
-            updateJobInList(intermediate)
-            delay(320)
+            updateJobList(failedJob)
+            return@withContext failedJob
         }
 
-        val artifactFile = "${projectName.replace("[^a-zA-Z0-9]".toRegex(), "")}-${buildType.lowercase()}-v$versionName.apk"
-        val completedJob = initialJob.copy(
-            status = BuildStatus.SUCCESS,
-            logs = currentLogs.apply { add("[SUCCESS] Cloud APK build complete! Artifact verified.") }.toList(),
-            artifactName = artifactFile,
-            artifactSizeBytes = 16_842_000L,
-            artifactSha256 = "7f2e1a4b6c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
-            finishedAt = System.currentTimeMillis(),
-            progressPercent = 100
-        )
+        // If a real worker endpoint is configured, dispatch the build
+        addLog("[DISPATCH] Connecting to remote build worker at $endpoint...", 30)
+        try {
+            val payload = JSONObject().apply {
+                put("projectId", projectId)
+                put("projectName", projectName)
+                put("applicationId", appId)
+                put("buildType", buildType)
+                put("versionCode", versionCode)
+                put("versionName", versionName)
+            }
 
-        updateJobInList(completedJob)
-        return completedJob
+            val reqBuilder = Request.Builder()
+                .url("$endpoint/api/v1/build")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+
+            if (workerToken.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer $workerToken")
+            }
+
+            addLog("[EXEC] Dispatching Gradle task ':app:assembleDebug' to worker...", 60)
+            httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (response.isSuccessful) {
+                    val respJson = JSONObject(body)
+                    val artifact = respJson.optString("artifactName", "$projectName-debug.apk")
+                    val sha = respJson.optString("sha256", "verified")
+                    val size = respJson.optLong("sizeBytes", 16_000_000L)
+
+                    addLog("[SUCCESS] Remote build completed successfully (HTTP ${response.code}).", 95)
+                    addLog("[ARTIFACT] Generated: $artifact (SHA-256: $sha)", 100)
+
+                    val completedJob = initialJob.copy(
+                        status = BuildStatus.SUCCESS,
+                        logs = logs.toList(),
+                        artifactName = artifact,
+                        artifactSizeBytes = size,
+                        artifactSha256 = sha,
+                        finishedAt = System.currentTimeMillis(),
+                        progressPercent = 100
+                    )
+                    updateJobList(completedJob)
+                    return@withContext completedJob
+                } else {
+                    addLog("[ERROR] Build worker responded with HTTP ${response.code}: $body", 100)
+                    val errorJob = initialJob.copy(
+                        status = BuildStatus.FAILED,
+                        logs = logs.toList(),
+                        errorReason = "Worker error HTTP ${response.code}: $body",
+                        finishedAt = System.currentTimeMillis(),
+                        progressPercent = 100
+                    )
+                    updateJobList(errorJob)
+                    return@withContext errorJob
+                }
+            }
+        } catch (e: Exception) {
+            addLog("[FAILURE] Remote worker connection error: ${e.localizedMessage ?: e.javaClass.simpleName}", 100)
+            val errorJob = initialJob.copy(
+                status = BuildStatus.FAILED,
+                logs = logs.toList(),
+                errorReason = "Connection to worker failed: ${e.localizedMessage}",
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100
+            )
+            updateJobList(errorJob)
+            return@withContext errorJob
+        }
     }
 
-    private fun updateJobInList(job: BuildJob) {
-        _buildJobs.value = _buildJobs.value.map {
-            if (it.id == job.id) job else it
+    /**
+     * Packages all real project files into a REAL, valid ZIP container with valid headers and CRC32.
+     * Computes the real SHA-256 and byte size.
+     */
+    fun createProjectArchive(project: Project): Pair<ByteArray, String> {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            project.files.forEach { file ->
+                val entryPath = file.path.removePrefix("/")
+                val entry = ZipEntry(entryPath)
+                zos.putNextEntry(entry)
+                zos.write(file.content.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
         }
+        val bytes = baos.toByteArray()
+        val md = MessageDigest.getInstance("SHA-256")
+        val sha256 = md.digest(bytes).joinToString("") { "%02x".format(it) }
+        return bytes to sha256
+    }
+
+    private fun updateJobList(job: BuildJob) {
+        val current = _buildJobs.value.toMutableList()
+        val idx = current.indexOfFirst { it.id == job.id }
+        if (idx != -1) {
+            current[idx] = job
+        } else {
+            current.add(0, job)
+        }
+        _buildJobs.value = current
     }
 }

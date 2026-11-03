@@ -254,36 +254,106 @@ fun SettingsScreen(
             }
         }
 
-        // Engine Status Check
+        // REA Backend Worker Configuration & Live Health Check
         item {
+            val engineState by viewModel.engineManager.engineState.collectAsState()
+            var workerUrlInput by remember(engineState.cloudWorkerEndpoint) { mutableStateOf(engineState.cloudWorkerEndpoint) }
+            var workerTokenInput by remember(engineState.cloudWorkerToken) { mutableStateOf(engineState.cloudWorkerToken) }
+            var isEditingWorker by remember { mutableStateOf(false) }
+
             Spacer(modifier = Modifier.height(6.dp))
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = CleanSurface,
-                border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (engineState.mcpConnected) CleanGreen else CleanBorder
+                ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text("REA Decompiler Engine", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
-                        Text("Linux Worker v22.23 & JADX Operational", fontSize = 11.sp, color = CleanGreen)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("REA Backend Worker", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                            Text(
+                                text = when (engineState.status) {
+                                    com.example.rea.data.model.EngineStatus.RUNNING -> "Connected • MCP Tools Active"
+                                    com.example.rea.data.model.EngineStatus.ERROR -> "Connection Failed • Check URL"
+                                    com.example.rea.data.model.EngineStatus.STOPPED -> "Configured • Stopped"
+                                    else -> "NOT CONFIGURED • Decompiler Worker"
+                                },
+                                fontSize = 11.sp,
+                                color = if (engineState.mcpConnected) CleanGreen else if (engineState.status == com.example.rea.data.model.EngineStatus.ERROR) CleanRed else TextMuted
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            TextButton(
+                                onClick = { isEditingWorker = !isEditingWorker },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(if (isEditingWorker) "Done" else "Configure", fontSize = 12.sp, color = CleanBlue)
+                            }
+
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val health = viewModel.engineManager.runHealthCheck()
+                                        Toast.makeText(context, health, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CleanSurfaceLight, contentColor = TextMain),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("ping_worker_btn")
+                            ) {
+                                Text("Ping", fontSize = 12.sp)
+                            }
+                        }
                     }
 
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                val health = viewModel.engineManager.runHealthCheck()
-                                Toast.makeText(context, health, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CleanSurfaceLight, contentColor = TextMain),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Ping", fontSize = 12.sp)
+                    if (isEditingWorker) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = workerUrlInput,
+                            onValueChange = { workerUrlInput = it },
+                            label = { Text("Worker URL (e.g. http://10.0.2.2:8080)", fontSize = 11.sp) },
+                            placeholder = { Text("http://10.0.2.2:8080", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CleanBlue,
+                                unfocusedBorderColor = CleanBorder
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = workerTokenInput,
+                            onValueChange = { workerTokenInput = it },
+                            label = { Text("Auth Token (Optional)", fontSize = 11.sp) },
+                            placeholder = { Text("Bearer token...", fontSize = 11.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CleanBlue,
+                                unfocusedBorderColor = CleanBorder
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.engineManager.updateWorkerConfig(workerUrlInput, workerTokenInput)
+                                isEditingWorker = false
+                                Toast.makeText(context, "Worker URL saved!", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Save Worker Configuration")
+                        }
                     }
                 }
             }

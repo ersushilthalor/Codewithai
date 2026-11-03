@@ -1,13 +1,13 @@
 package com.example.rea.data.service
 
 import com.example.rea.data.model.*
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
-class AgentService {
+class AgentService(private val providerManager: AiProviderManager) {
+
     private val _messages = MutableStateFlow<List<AgentMessage>>(
         listOf(
             AgentMessage(
@@ -19,7 +19,7 @@ class AgentService {
                 id = "msg_welcome",
                 sender = MessageSender.AGENT,
                 agentMode = AgentMode.ANALYSIS,
-                text = "👋 Welcome to **REA Studio**!\n\nTap the **+** button below to **Select an APK** from your phone storage or pick a UI screenshot. I will decompile, inspect permissions, and rebuild an installable APK for you without needing a PC."
+                text = "👋 Welcome to **REA Studio**!\n\nTap the **+** button below to **Select an APK** from your device storage or pick a UI screenshot. I will inspect permissions, parse the manifest, extract components, and reconstruct modern Jetpack Compose code."
             )
         )
     )
@@ -55,45 +55,14 @@ class AgentService {
         )
         _messages.value = _messages.value + userMsg
 
-        delay(350)
-
-        val appName = currentProject?.name ?: "Selected APK"
-        val skills = when (mode) {
-            ChatMode.FULL_REBUILD -> listOf(
-                ReaSkillAction("rea_inspect_apk", "Inspect APK Metadata", "Examining manifest, components & DEX references"),
-                ReaSkillAction("rea_architecture_map", "Compose Rebuilder", "Synthesizing Material 3 UI & MVVM StateFlow"),
-                ReaSkillAction("rea_build_diagnose", "Gradle Build Check", "Verifying Android SDK 36 compatibility")
-            )
-            ChatMode.UI_CLONE -> listOf(
-                ReaSkillAction("rea_apktool_decode", "Decode Resources", "Extracting layouts, drawables & strings"),
-                ReaSkillAction("rea_architecture_map", "Generate Compose UI", "Converting XML layouts to Jetpack Compose Composables")
-            )
-            ChatMode.SECURITY_AUDIT -> listOf(
-                ReaSkillAction("rea_manifest_extract", "Extract Permissions", "Auditing 8 permissions against Android M3 standards"),
-                ReaSkillAction("rea_inspect_apk", "Signature Audit", "Verifying APK Signature block v2+v3")
-            )
-            ChatMode.FEATURE_INJECT -> listOf(
-                ReaSkillAction("rea_jadx_decompile", "JADX Decompilation", "Scanning entrypoint activities for injection"),
-                ReaSkillAction("rea_architecture_map", "Inject Features", "Hooking ViewModel callbacks")
-            )
-            ChatMode.QUICK_INSPECT -> listOf(
-                ReaSkillAction("rea_inspect_apk", "Quick Inspection", "Package info, SDK 35/36 target, DEX bytecode classes")
-            )
-        }
-
-        val responseText = when (mode) {
-            ChatMode.FULL_REBUILD -> "I have processed your request for **$appName** in **Full Rebuild** mode. The architecture is mapped to modern Jetpack Compose with clean Kotlin Coroutines."
-            ChatMode.UI_CLONE -> "UI Clone mode active: Generated declarative Compose screens matching the original design tokens with Material 3 styling."
-            ChatMode.SECURITY_AUDIT -> "Security audit complete for **$appName**: No critical vulnerabilities detected. All dangerous permissions are properly scoped."
-            ChatMode.FEATURE_INJECT -> "Feature injection module ready: Hooks installed into MainActivity navigation graph."
-            ChatMode.QUICK_INSPECT -> "Inspection summary: Target SDK 35, Compile SDK 36, Kotlin 2.2.10, Jetpack Compose M3 enabled."
-        }
+        val (responseText, skills, diff) = generateRealAgentResponse(userPrompt, mode.name, currentProject, provider)
 
         val agentMsg = AgentMessage(
             id = UUID.randomUUID().toString(),
             sender = MessageSender.AGENT,
             text = responseText,
-            skillsUsed = skills
+            skillsUsed = skills,
+            proposedDiff = diff
         )
         _messages.value = _messages.value + agentMsg
     }
@@ -112,124 +81,114 @@ class AgentService {
         )
         _messages.value = _messages.value + userMsg
 
-        delay(350)
-
-        // Generate response based on prompt and mode
-        val (responseText, tools, diff) = generateAgentResponse(userPrompt, mode, currentProject)
+        val (responseText, skills, diff) = generateRealAgentResponse(userPrompt, mode.name, currentProject, provider)
 
         val agentMsg = AgentMessage(
             id = UUID.randomUUID().toString(),
             sender = MessageSender.AGENT,
             agentMode = mode,
             text = responseText,
-            toolCalls = tools,
+            toolCalls = skills.map {
+                ToolCallInfo(
+                    toolName = it.skillKey,
+                    params = it.title,
+                    status = it.status,
+                    output = it.description
+                )
+            },
             proposedDiff = diff
         )
         _messages.value = _messages.value + agentMsg
     }
 
-    private fun generateAgentResponse(
+    private suspend fun generateRealAgentResponse(
         prompt: String,
-        mode: AgentMode,
-        project: Project?
-    ): Triple<String, List<ToolCallInfo>, CodeDiff?> {
-        val lower = prompt.lowercase()
-        val appName = project?.name ?: "Target App"
+        modeName: String,
+        project: Project?,
+        provider: AiProvider
+    ): Triple<String, List<ReaSkillAction>, CodeDiff?> {
+        val appName = project?.name ?: "Target Application"
+        val pkg = project?.packageName ?: "com.target.app"
+        val filesCount = project?.files?.size ?: 0
+        val permsCount = project?.analysisResult?.permissions?.size ?: 0
+        val actsCount = project?.analysisResult?.activities?.size ?: 0
 
-        return when {
-            mode == AgentMode.ANALYSIS || lower.contains("analyse") || lower.contains("analyze") || lower.contains("explain") -> {
-                val tools = listOf(
-                    ToolCallInfo(
-                        toolName = "rea_inspect_apk",
-                        params = "target=${project?.targetApkName ?: "target.apk"}",
-                        status = "Executed",
-                        output = "Identified 8 Activities, 4 Dangerous Permissions, MVVM structure, Jetpack Compose UI"
-                    ),
-                    ToolCallInfo(
-                        toolName = "rea_jadx_decompile",
-                        params = "scope=core_controllers",
-                        status = "Executed",
-                        output = "Decompiled 14 classes without syntax errors."
-                    )
+        // If provider has an active key, make a REAL AI call
+        if (provider.currentKey.isNotBlank()) {
+            val systemPrompt = """
+You are REA Studio AI Agent, an expert Android reverse-engineer and Jetpack Compose rebuilder.
+Target Context:
+- Project: $appName (Package: $pkg)
+- Audited Components: $actsCount Activities, $permsCount Permissions
+- Source Files: $filesCount files in workspace (${project?.files?.take(5)?.joinToString(", ") { it.name }})
+Mode: $modeName
+
+Provide actionable, production-quality Android architectural guidance or concrete Jetpack Compose Kotlin code.
+If proposing a file edit, format code snippet clearly.
+            """.trimIndent()
+
+            val aiResult = providerManager.generateAiResponse(provider, systemPrompt, prompt)
+            if (aiResult.isSuccess) {
+                val responseText = aiResult.getOrThrow()
+                val diff = parseCodeDiffFromAiOutput(responseText, project)
+                val skills = listOf(
+                    ReaSkillAction("rea_ai_inference", "${provider.name} Inference", "Real API response using ${provider.codeGenModel}")
                 )
-
-                val response = """
-### 🔍 REA Architecture Analysis: $appName
-
-1. **Architecture & Design Pattern**:
-   - The application follows **MVVM (Model-View-ViewModel)** with **Unidirectional Data Flow**.
-   - State is managed via Kotlin `StateFlow<T>` and consumed in declarative Jetpack Compose composables.
-
-2. **Security & Permissions**:
-   - Declared permissions include `CAMERA`, `RECORD_AUDIO`, and `ACCESS_FINE_LOCATION`.
-   - All runtime permissions are gated behind runtime permission contracts.
-
-3. **Detected Frameworks**:
-   - Jetpack Compose M3, CameraX 1.4, Kotlin Coroutines, Retrofit 2.12, Room Database.
-
-4. **Reconstruction Feasibility**:
-   - High (94%). The UI and business logic can be reproduced with clean-room Kotlin code.
-                """.trimIndent()
-                Triple(response, tools, null)
-            }
-
-            mode == AgentMode.BUILD_ENGINEER || lower.contains("gradle") || lower.contains("build") || lower.contains("compile") -> {
-                val tools = listOf(
-                    ToolCallInfo(
-                        toolName = "rea_build_diagnose",
-                        params = "task=:app:assembleDebug",
-                        status = "Executed",
-                        output = "Gradle 8.9 wrapper verified, Android SDK 36 platform symbols confirmed."
-                    )
-                )
-
-                val diff = CodeDiff(
-                    filePath = "app/build.gradle.kts",
-                    originalSnippet = "targetSdk = 34",
-                    replacementSnippet = "targetSdk = 35\ncompileSdk = 36"
-                )
-
-                val response = """
-### 🛠️ Build Engineer Diagnostics
-
-- **Toolchain Status**: Android SDK 36, Kotlin 2.2.10, AGP 8.9.0.
-- **Dependency Audit**:
-  - `androidx.compose.bom:2024.09.00` is fully aligned.
-  - No duplicated symbols detected in DEX merge stage.
-- **Recommendation**:
-  - Target SDK upgraded to API 35 with edge-to-edge mandatory enforcement.
-  - You can trigger a cloud build directly from the **Cloud APK Builder** tab.
-                """.trimIndent()
-                Triple(response, tools, diff)
-            }
-
-            else -> { // DEVELOPER MODE
-                val tools = listOf(
-                    ToolCallInfo(
-                        toolName = "rea_architecture_map",
-                        params = "feature=camera_pipeline",
-                        status = "Executed",
-                        output = "Generated Compose Composable and StateFlow ViewModel."
-                    )
-                )
-
-                val diff = CodeDiff(
-                    filePath = "app/src/main/java/com/example/ui/CameraPreviewScreen.kt",
-                    originalSnippet = "// Viewfinder HUD\nText(text = \"ISO 400\")",
-                    replacementSnippet = "// Advanced Viewfinder HUD with Touch-to-Focus\nText(text = \"ISO 400 • F1.8 • 1/120s • HDR+ Active\", color = Color(0xFF00E5FF))"
-                )
-
-                val response = """
-### 💻 Developer Implementation
-
-I've generated the requested UI & business logic update using modern Jetpack Compose.
-- Implemented state hoisting via `CameraViewModel`.
-- Added high-contrast cyber-styled telemetry overlay for the viewfinder.
-- Attached a code diff below which you can review and apply to your workspace with one tap.
-                """.trimIndent()
-                Triple(response, tools, diff)
+                return Triple(responseText, skills, diff)
+            } else {
+                val err = aiResult.exceptionOrNull()?.localizedMessage ?: "API request failed"
+                val responseText = "⚠️ **${provider.name} Request Failed**\n\n$err\n\nPlease verify your API key in **Settings**."
+                return Triple(responseText, emptyList(), null)
             }
         }
+
+        // When NO API key is configured, return an honest report based on actual local workspace evidence
+        val skills = mutableListOf<ReaSkillAction>()
+        skills.add(ReaSkillAction("rea_local_audit", "Local AST Inspection", "Audited $filesCount workspace files"))
+
+        val response = if (project != null) {
+            """
+### 📋 Local Project Audit: $appName
+
+- **Package**: `$pkg`
+- **Recovered Activities**: $actsCount components
+- **Permissions Audited**: $permsCount declared
+- **Workspace Files**: $filesCount source files
+
+💡 *Tip: Configure your **Google Gemini** or **OpenAI** API key in **Settings** to enable real-time generative code reconstruction and automated diff synthesis.*
+            """.trimIndent()
+        } else {
+            """
+### 🔍 REA Studio Ready
+
+No APK target is currently loaded.
+- Tap **+** below or use **Select APK** from the top bar to inspect any installed or downloaded APK.
+- Once loaded, real permissions, manifest, and component structures will be extracted automatically.
+
+💡 *To enable conversational AI assistance, configure your Gemini or OpenAI API key in **Settings**.*
+            """.trimIndent()
+        }
+
+        return Triple(response, skills, null)
+    }
+
+    private fun parseCodeDiffFromAiOutput(text: String, project: Project?): CodeDiff? {
+        if (!text.contains("```kotlin") && !text.contains("```")) return null
+        val targetFile = project?.files?.firstOrNull { it.language == "kotlin" } ?: return null
+
+        val snippet = text.substringAfter("```kotlin")
+            .substringAfter("```")
+            .substringBefore("```")
+            .trim()
+
+        if (snippet.length > 20) {
+            return CodeDiff(
+                filePath = targetFile.path,
+                originalSnippet = targetFile.content.lines().firstOrNull { it.contains("class") || it.contains("fun") } ?: "// Original source",
+                replacementSnippet = snippet.take(300)
+            )
+        }
+        return null
     }
 
     fun clearHistory() {

@@ -1,104 +1,236 @@
 package com.example.rea.data.service
 
+import com.example.BuildConfig
 import com.example.rea.data.model.EngineStatus
 import com.example.rea.data.model.ReaEngineState
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class ReaEngineManager {
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
+
+    private val initialEndpoint = try {
+        val ep = BuildConfig.REA_WORKER_ENDPOINT
+        if (ep.isNotBlank() && ep != "placeholder" && ep != "\"placeholder\"" && ep != "default") ep else ""
+    } catch (_: Exception) { "" }
+
+    private val initialToken = try {
+        val tok = BuildConfig.REA_WORKER_TOKEN
+        if (tok.isNotBlank() && tok != "placeholder" && tok != "\"placeholder\"" && tok != "default") tok else ""
+    } catch (_: Exception) { "" }
+
     private val _engineState = MutableStateFlow(
         ReaEngineState(
-            status = EngineStatus.RUNNING,
+            status = if (initialEndpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.NOT_INSTALLED,
             version = "v1.4.2-core",
             repoUrl = "https://github.com/morluto/rea",
-            cloudWorkerEndpoint = "https://worker-node.rea.internal:8080",
-            cloudWorkerToken = "rea_live_worker_token_secure",
-            mcpConnected = true,
-            nodeVersion = "v22.23.4",
-            jdkVersion = "OpenJDK 17.0.12",
-            jadxVersion = "1.5.0-mcp",
+            cloudWorkerEndpoint = initialEndpoint,
+            cloudWorkerToken = initialToken,
+            mcpConnected = false,
+            nodeVersion = "v22.23.4 (Requires Worker)",
+            jdkVersion = "OpenJDK 17",
+            jadxVersion = "1.5.0",
             apktoolVersion = "2.9.3",
             logs = listOf(
-                "[INIT] Cloud worker provisioned (Linux x86_64 / Alpine Linux 3.20 container).",
-                "[RUNTIME] Node.js v22.23.4 & npm 10.8.2 verified.",
-                "[SYSTEM] procps-ng v4.0.4 loaded for process health inspection.",
-                "[REPO] Cloned official REA repository: https://github.com/morluto/rea @ commit 7a8f9c1.",
-                "[DEPS] REA MCP dependencies verified (72 packages audited, 0 vulnerabilities).",
-                "[DECOMPILER] Headless JADX MCP engine v1.5.0 SHA-256 integrity check [PASSED].",
-                "[RESOURCES] Apktool v2.9.3 resource analyzer initialized.",
-                "[MCP] MCP Server listening on stdio & SSE transport (port 8080).",
-                "[READY] 7 REA tools published and connected to AI Coding Agent."
+                if (initialEndpoint.isNotBlank()) {
+                    "[INIT] Configured worker endpoint: $initialEndpoint. Ready to test connection."
+                } else {
+                    "[INIT] REA Backend Worker not configured. Heavy tasks (JADX decompilation & Gradle builds) require a Linux worker URL."
+                }
             ),
-            progressPercent = 100,
-            currentStep = "Engine Operational & MCP Connected"
+            progressPercent = 0,
+            currentStep = if (initialEndpoint.isNotBlank()) "Worker Configured (Stopped)" else "Not Configured"
         )
     )
     val engineState: StateFlow<ReaEngineState> = _engineState.asStateFlow()
 
+    fun updateWorkerConfig(endpoint: String, token: String) {
+        val currentLogs = _engineState.value.logs.toMutableList()
+        currentLogs.add("[CONFIG] Updated worker endpoint: $endpoint")
+        _engineState.value = _engineState.value.copy(
+            cloudWorkerEndpoint = endpoint.trim(),
+            cloudWorkerToken = token.trim(),
+            status = if (endpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.NOT_INSTALLED,
+            mcpConnected = false,
+            logs = currentLogs
+        )
+    }
+
     suspend fun installOrUpdateEngine(
         repoUrl: String = "https://github.com/morluto/rea",
-        cloudEndpoint: String = "https://worker-node.rea.internal:8080",
+        cloudEndpoint: String = "",
         cloudToken: String = ""
-    ) {
-        val steps = listOf(
-            EngineStatus.PROVISIONING to ("Provisioning isolated cloud Linux worker environment..." to 10),
-            EngineStatus.INSTALLING_NODE to ("Installing Node.js v22.23.4 (LTS) & npm 10.8.2..." to 25),
-            EngineStatus.INSTALLING_PROCPS to ("Installing procps system package for memory/process supervision..." to 40),
-            EngineStatus.FETCHING_REPO to ("Fetching official REA repository from $repoUrl..." to 55),
-            EngineStatus.INSTALLING_DEPS to ("Executing 'npm ci --production' and verifying module hashes..." to 70),
-            EngineStatus.CONFIGURING_MCP to ("Setting up JDK 17, JADX headless decompiler & Apktool 2.9.3..." to 85),
-            EngineStatus.VERIFYING_TOOLS to ("Testing MCP tool catalog and running ping/health verification..." to 95)
-        )
+    ) = withContext(Dispatchers.IO) {
+        val endpoint = cloudEndpoint.ifBlank { _engineState.value.cloudWorkerEndpoint }.trim()
+        val token = cloudToken.ifBlank { _engineState.value.cloudWorkerToken }.trim()
 
-        val currentLogs = _engineState.value.logs.toMutableList()
-        currentLogs.add("==================== INSTALLATION TRIGGERED ====================")
+        val logs = _engineState.value.logs.toMutableList()
+        logs.add("==================== WORKER CONNECTION CHECK ====================")
 
-        for ((status, stepInfo) in steps) {
-            val (msg, pct) = stepInfo
-            currentLogs.add("[EXEC] $msg")
+        if (endpoint.isBlank() || endpoint.contains(".internal")) {
+            logs.add("[ERROR] Invalid or unconfigured worker endpoint: '$endpoint'")
+            logs.add("[HELP] Set your actual Linux worker IP or domain (e.g., http://10.0.2.2:8080 or https://your-worker.com) in Settings.")
             _engineState.value = _engineState.value.copy(
-                status = status,
-                currentStep = msg,
-                progressPercent = pct,
-                logs = currentLogs.toList()
+                status = EngineStatus.NOT_INSTALLED,
+                mcpConnected = false,
+                currentStep = "Worker Not Configured",
+                progressPercent = 0,
+                logs = logs
             )
-            delay(350)
+            return@withContext
         }
 
-        currentLogs.add("[MCP] Registered tools: rea_inspect_apk, rea_jadx_decompile, rea_apktool_decode, rea_manifest_extract, rea_build_diagnose")
-        currentLogs.add("[SUCCESS] REA Engine v1.4.2-core operational. Cloud worker active at $cloudEndpoint.")
-
+        logs.add("[CONNECT] Attempting handshake with worker at $endpoint...")
         _engineState.value = _engineState.value.copy(
-            status = EngineStatus.RUNNING,
-            currentStep = "Engine Operational & MCP Connected",
-            progressPercent = 100,
-            mcpConnected = true,
-            repoUrl = repoUrl,
-            cloudWorkerEndpoint = cloudEndpoint,
-            cloudWorkerToken = cloudToken.ifBlank { _engineState.value.cloudWorkerToken },
-            logs = currentLogs.toList()
+            status = EngineStatus.PROVISIONING,
+            currentStep = "Connecting to $endpoint...",
+            progressPercent = 30,
+            logs = logs
         )
+
+        try {
+            val reqBuilder = Request.Builder().url("$endpoint/health")
+            if (token.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer $token")
+            }
+            val startTime = System.currentTimeMillis()
+            httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                val latency = System.currentTimeMillis() - startTime
+                if (response.isSuccessful) {
+                    val body = response.body?.string().orEmpty()
+                    logs.add("[SUCCESS] Handshake verified in ${latency}ms (HTTP ${response.code}).")
+                    logs.add("[MCP] Discovering available tools at $endpoint/mcp/tools...")
+
+                    val discoveredTools = fetchWorkerTools(endpoint, token)
+                    logs.add("[READY] Discovered ${discoveredTools.size} tools: ${discoveredTools.joinToString(", ")}")
+
+                    _engineState.value = _engineState.value.copy(
+                        status = EngineStatus.RUNNING,
+                        mcpConnected = true,
+                        currentStep = "Operational (Ping: ${latency}ms)",
+                        progressPercent = 100,
+                        cloudWorkerEndpoint = endpoint,
+                        cloudWorkerToken = token,
+                        activeTools = discoveredTools.ifEmpty { _engineState.value.activeTools },
+                        logs = logs
+                    )
+                } else {
+                    logs.add("[ERROR] Worker responded with HTTP error ${response.code}: ${response.message}")
+                    _engineState.value = _engineState.value.copy(
+                        status = EngineStatus.ERROR,
+                        mcpConnected = false,
+                        currentStep = "Worker Error: HTTP ${response.code}",
+                        progressPercent = 0,
+                        logs = logs
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            logs.add("[FAILURE] Failed to connect to $endpoint: ${e.localizedMessage ?: e.javaClass.simpleName}")
+            logs.add("[STATUS] REA Engine requires an active backend server.")
+            _engineState.value = _engineState.value.copy(
+                status = EngineStatus.ERROR,
+                mcpConnected = false,
+                currentStep = "Unreachable: ${e.localizedMessage ?: "Connection Refused"}",
+                progressPercent = 0,
+                logs = logs
+            )
+        }
+    }
+
+    private fun fetchWorkerTools(endpoint: String, token: String): List<String> {
+        return try {
+            val req = Request.Builder().url("$endpoint/mcp/tools")
+            if (token.isNotBlank()) req.header("Authorization", "Bearer $token")
+            httpClient.newCall(req.build()).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val json = JSONObject(resp.body?.string().orEmpty())
+                    val toolsArr = json.optJSONArray("tools") ?: return emptyList()
+                    val result = mutableListOf<String>()
+                    for (i in 0 until toolsArr.length()) {
+                        result.add(toolsArr.optString(i))
+                    }
+                    result
+                } else emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun runHealthCheck(): String = withContext(Dispatchers.IO) {
+        val endpoint = _engineState.value.cloudWorkerEndpoint.trim()
+        val token = _engineState.value.cloudWorkerToken.trim()
+        val logs = _engineState.value.logs.toMutableList()
+
+        if (endpoint.isBlank() || endpoint.contains(".internal")) {
+            val msg = "NOT CONFIGURED (Configure worker URL in Settings)"
+            logs.add("[HEALTH-CHECK] $msg")
+            _engineState.value = _engineState.value.copy(logs = logs)
+            return@withContext msg
+        }
+
+        logs.add("[HEALTH-CHECK] Pinging $endpoint/health...")
+        val startTime = System.currentTimeMillis()
+        try {
+            val reqBuilder = Request.Builder().url("$endpoint/health")
+            if (token.isNotBlank()) reqBuilder.header("Authorization", "Bearer $token")
+
+            httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                val latency = System.currentTimeMillis() - startTime
+                if (resp.isSuccessful) {
+                    val msg = "Healthy (${latency}ms, HTTP ${resp.code})"
+                    logs.add("[HEALTH-CHECK] ✓ Worker healthy: latency ${latency}ms")
+                    _engineState.value = _engineState.value.copy(
+                        status = EngineStatus.RUNNING,
+                        mcpConnected = true,
+                        currentStep = "Operational (${latency}ms)",
+                        logs = logs
+                    )
+                    return@withContext msg
+                } else {
+                    val msg = "Worker Error (HTTP ${resp.code})"
+                    logs.add("[HEALTH-CHECK] ✗ Worker HTTP ${resp.code}")
+                    _engineState.value = _engineState.value.copy(
+                        status = EngineStatus.ERROR,
+                        mcpConnected = false,
+                        logs = logs
+                    )
+                    return@withContext msg
+                }
+            }
+        } catch (e: Exception) {
+            val msg = "Unreachable (${e.localizedMessage ?: "Failed to connect"})"
+            logs.add("[HEALTH-CHECK] ✗ Error: $msg")
+            _engineState.value = _engineState.value.copy(
+                status = EngineStatus.ERROR,
+                mcpConnected = false,
+                logs = logs
+            )
+            return@withContext msg
+        }
     }
 
     fun uninstallEngine() {
         val logs = _engineState.value.logs.toMutableList()
-        logs.add("[WARN] REA Engine uninstalled. Worker stopped.")
+        logs.add("[WARN] REA Engine connection stopped.")
         _engineState.value = _engineState.value.copy(
-            status = EngineStatus.NOT_INSTALLED,
+            status = EngineStatus.STOPPED,
             mcpConnected = false,
-            currentStep = "Engine Not Installed",
+            currentStep = "Engine Stopped",
             progressPercent = 0,
             logs = logs
         )
-    }
-
-    suspend fun runHealthCheck(): String {
-        delay(300)
-        val logs = _engineState.value.logs.toMutableList()
-        logs.add("[HEALTH-CHECK] Ping MCP tool server -> 24ms roundtrip. JADX engine memory: 284MB/2048MB. All OK.")
-        _engineState.value = _engineState.value.copy(logs = logs)
-        return "Healthy (Latency: 24ms, Worker Memory: 284MB)"
     }
 }

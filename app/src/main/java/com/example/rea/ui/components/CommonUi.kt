@@ -79,15 +79,25 @@ fun ReaTopBar(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val statusColor = when (engineStatus) {
+                            com.example.rea.data.model.EngineStatus.RUNNING -> CleanGreen
+                            com.example.rea.data.model.EngineStatus.ERROR -> CleanRed
+                            else -> CleanOrange
+                        }
+                        val statusText = when (engineStatus) {
+                            com.example.rea.data.model.EngineStatus.RUNNING -> "Worker Connected • $activeProviderName"
+                            com.example.rea.data.model.EngineStatus.ERROR -> "Worker Error • $activeProviderName"
+                            else -> "On-Device Engine • $activeProviderName"
+                        }
                         Box(
                             modifier = Modifier
                                 .size(7.dp)
                                 .clip(CircleShape)
-                                .background(CleanGreen)
+                                .background(statusColor)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Ready • Auto-Pilot Active",
+                            text = statusText,
                             fontSize = 11.sp,
                             color = TextMuted,
                             fontWeight = FontWeight.Medium

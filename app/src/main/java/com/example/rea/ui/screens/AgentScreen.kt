@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -119,11 +120,13 @@ fun AgentScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Button(
                                     onClick = {
-                                        Toast.makeText(context, "Applied to project!", Toast.LENGTH_SHORT).show()
+                                        viewModel.applyCodeDiff(msg.proposedDiff)
+                                        Toast.makeText(context, "Applied to ${msg.proposedDiff.filePath}!", Toast.LENGTH_SHORT).show()
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("apply_code_diff_btn")
                                 ) {
                                     Text("Apply Code Changes", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
@@ -189,7 +192,7 @@ fun AgentScreen(
                         .testTag("agent_send_btn")
                 ) {
                     Icon(
-                        Icons.Default.Send,
+                        Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send",
                         tint = CleanBg,
                         modifier = Modifier.size(18.dp)

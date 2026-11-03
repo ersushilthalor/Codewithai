@@ -72,6 +72,7 @@ android {
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
+// Secrets configuration for AI Studio
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"

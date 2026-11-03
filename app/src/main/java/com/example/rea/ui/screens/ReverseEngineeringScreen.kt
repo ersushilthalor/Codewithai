@@ -142,6 +142,18 @@ fun ReverseEngineeringScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Select APK", fontSize = 13.sp)
                         }
+
+                        OutlinedButton(
+                            onClick = { viewModel.runSelfAnalysis() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CleanGreen),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, CleanGreen.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(48.dp).testTag("re_inspect_self_btn")
+                        ) {
+                            Icon(Icons.Default.BugReport, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Inspect Self", fontSize = 13.sp)
+                        }
                     }
                 }
             }
@@ -289,11 +301,22 @@ fun ReverseEngineeringScreen(
                         Text("No APK Selected", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tap 'Select APK' above or use the AI Chat on the Home screen to select an APK from your phone storage.",
+                            text = "Select an external APK from device storage, or run real on-device inspection on this app itself.",
                             fontSize = 12.sp,
                             color = TextMuted,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { viewModel.runSelfAnalysis() },
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(46.dp).testTag("re_inspect_self_cta")
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Inspect Current App (Live Self-Analysis)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
