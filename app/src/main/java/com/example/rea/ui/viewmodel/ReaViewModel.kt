@@ -73,8 +73,18 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
     val reconstructionProgress: StateFlow<ReconstructionUiProgress> = _reconstructionProgress.asStateFlow()
 
     // Code Editor Active File State
-    private val _selectedFile = MutableStateFlow<DecompiledFile?>(null)
-    val selectedFile: StateFlow<DecompiledFile?> = _selectedFile.asStateFlow()
+    private val _selectedFile = MutableStateFlow<ProjectFile?>(null)
+    val selectedFile: StateFlow<ProjectFile?> = _selectedFile.asStateFlow()
+
+    // JADX Cloud Decompile State (Problem 2)
+    private val _isDecompiling = MutableStateFlow(false)
+    val isDecompiling: StateFlow<Boolean> = _isDecompiling.asStateFlow()
+
+    private val _decompileLog = MutableStateFlow<String>("")
+    val decompileLog: StateFlow<String> = _decompileLog.asStateFlow()
+
+    private val _lastSelectedApkUri = MutableStateFlow<Uri?>(null)
+    val lastSelectedApkUri: StateFlow<Uri?> = _lastSelectedApkUri.asStateFlow()
 
     // GitHub Config
     private val _gitHubConfig = MutableStateFlow(loadInitialGitHubConfig())
@@ -239,6 +249,7 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun runAnalysisOnUri(uri: Uri) {
+        _lastSelectedApkUri.value = uri
         viewModelScope.launch {
             _analysisProgress.value = AnalysisUiProgress(isAnalyzing = true)
             val logs = mutableListOf<String>()
@@ -335,7 +346,71 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun triggerJadxDecompilation(targetUri: Uri? = null) {
+        val uri = targetUri ?: _lastSelectedApkUri.value
+        val token = _gitHubConfig.value.token
+        val owner = _gitHubConfig.value.username
+        val repo = _gitHubConfig.value.currentRepo?.substringAfterLast('/') ?: "reconstructed-app"
+
+        if (uri == null) {
+            Toast.makeText(getApplication(), "Select an APK first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (token.isBlank() || owner.isBlank()) {
+            Toast.makeText(getApplication(), "Configure GitHub Token in Settings first", Toast.LENGTH_LONG).show()
+            _currentScreen.value = ScreenDestination.SETTINGS
+            return
+        }
+
+        viewModelScope.launch {
+            _isDecompiling.value = true
+            _decompileLog.value = "Reading APK file from storage..."
+
+            val apkBytes = withContext(Dispatchers.IO) {
+                try {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                } catch (_: Exception) { null }
+            }
+
+            if (apkBytes == null || apkBytes.isEmpty()) {
+                _isDecompiling.value = false
+                _decompileLog.value = "Failed to read APK file."
+                Toast.makeText(getApplication(), "Failed to read APK file", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            val result = builderService.startDecompileWorkflow(
+                apkBytes = apkBytes,
+                apkFileName = "app.apk",
+                githubToken = token,
+                owner = owner,
+                repo = repo,
+                branch = "main"
+            ) { log, pct ->
+                _decompileLog.value = "[$pct%] $log"
+            }
+
+            _isDecompiling.value = false
+            if (result.isSuccess) {
+                val files = result.getOrNull() ?: emptyList()
+                val currentProj = projectRepository.getCurrentProject()
+                if (currentProj != null) {
+                    projectRepository.updateProjectFiles(currentProj.id, files)
+                    if (files.isNotEmpty()) {
+                        _selectedFile.value = files.first()
+                    }
+                }
+                Toast.makeText(getApplication(), "✓ Decompiled ${files.size} files with JADX!", Toast.LENGTH_LONG).show()
+                _currentScreen.value = ScreenDestination.CODE_EDITOR
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Decompilation failed"
+                Toast.makeText(getApplication(), "Error: $err", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun selectApkFromStorage(uri: Uri, fileName: String, fileSize: Long) {
+        _lastSelectedApkUri.value = uri
         viewModelScope.launch {
             val userMsg = AgentMessage(
                 id = UUID.randomUUID().toString(),

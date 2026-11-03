@@ -36,6 +36,8 @@ fun ReverseEngineeringScreen(
 ) {
     val analysis by viewModel.currentAnalysis.collectAsState()
     val progress by viewModel.analysisProgress.collectAsState()
+    val isDecompiling by viewModel.isDecompiling.collectAsState()
+    val decompileLog by viewModel.decompileLog.collectAsState()
     val context = LocalContext.current
     val app = analysis
 
@@ -166,6 +168,64 @@ fun ReverseEngineeringScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Inspect Self", fontSize = 13.sp)
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Decompile (JADX) Button via GitHub Actions
+                    Button(
+                        onClick = { viewModel.triggerJadxDecompilation() },
+                        enabled = !isDecompiling && app != null,
+                        colors = ButtonDefaults.buttonColors(containerColor = CleanPurple, contentColor = CleanBg),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("re_decompile_jadx_btn")
+                    ) {
+                        Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            if (isDecompiling) "Decompiling with JADX..." else "Decompile (JADX)",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Active JADX Decompilation Progress Card
+        if (isDecompiling) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = CleanSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanPurple.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = CleanPurple,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "JADX Cloud Decompilation Active",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CleanPurple
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = decompileLog.ifBlank { "Initiating JADX GitHub Actions workflow..." },
+                            fontSize = 11.sp,
+                            color = TextMuted,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
                     }
                 }
             }

@@ -518,7 +518,7 @@ fun DashboardScreen(
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Select APK from Storage", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
-                            Text("Choose any installed or downloaded .apk file to decompile and rebuild", fontSize = 11.sp, color = TextMuted)
+                            Text("Choose an APK file to inspect, decompile with JADX, or generate scaffold", fontSize = 11.sp, color = TextMuted)
                         }
                         Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
                     }
@@ -728,7 +728,7 @@ private fun AgentMessageCard(
                                     Icon(Icons.Default.Terminal, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "REA ENGINE SKILLS APPLIED",
+                                        text = "REA ANALYSIS SKILLS APPLIED",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = CleanBlue,
@@ -989,7 +989,7 @@ private fun AgentMessageCard(
                     }
                 }
 
-                // FINAL APK EXPORT CARD (Save Final APK to Phone Storage)
+                // APK EXPORT CARD (Save APK to Phone Storage)
                 val exportCard = msg.apkExportCard
                 if (exportCard != null) {
                     Spacer(modifier = Modifier.height(14.dp))
@@ -1025,7 +1025,7 @@ private fun AgentMessageCard(
                                     )
                                     val isRealApk = exportCard.apkFileName.endsWith(".apk")
                                     Text(
-                                        text = if (isRealApk) "${formatBytes(exportCard.sizeBytes)} • Compiled APK • Ready to Install" else "${formatBytes(exportCard.sizeBytes)} • Project ZIP Source Bundle",
+                                        text = if (isRealApk) "${formatBytes(exportCard.sizeBytes)} • Compiled APK" else "${formatBytes(exportCard.sizeBytes)} • Project ZIP Source Bundle",
                                         fontSize = 11.sp,
                                         color = if (isRealApk) CleanGreen else CleanBlue
                                     )

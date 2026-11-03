@@ -16,8 +16,8 @@ class ExampleRobolectricTest {
   fun `verify rea engine initial honest state`() {
     val engineManager = ReaEngineManager()
     val state = engineManager.engineState.value
-    // Real honest initial state is NOT_INSTALLED when no endpoint is configured
-    assertTrue(state.status == EngineStatus.NOT_INSTALLED || state.status == EngineStatus.STOPPED)
+    // Real honest initial state is DISCONNECTED when no endpoint is configured
+    assertTrue(state.status == EngineStatus.DISCONNECTED || state.status == EngineStatus.STOPPED)
     assertFalse("MCP should not be connected until verified with server", state.mcpConnected)
     assertEquals("v1.4.2-core", state.version)
   }
@@ -27,6 +27,17 @@ class ExampleRobolectricTest {
     val engineManager = ReaEngineManager()
     val result = engineManager.runHealthCheck()
     assertTrue("Should indicate not configured", result.contains("NOT CONFIGURED") || result.contains("Unreachable"))
+  }
+
+  @Test
+  fun `verify rea engine connect and disconnect worker lifecycle`() = runBlocking {
+    val engineManager = ReaEngineManager()
+    engineManager.connectWorker(cloudEndpoint = "")
+    assertEquals(EngineStatus.DISCONNECTED, engineManager.engineState.value.status)
+
+    engineManager.disconnectWorker()
+    assertEquals(EngineStatus.STOPPED, engineManager.engineState.value.status)
+    assertEquals("Worker Disconnected", engineManager.engineState.value.currentStep)
   }
 
   @Test

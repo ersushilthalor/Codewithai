@@ -21,20 +21,21 @@ class ReaEngineManager {
         .build()
 
     private val initialEndpoint = try {
-        val ep = BuildConfig.REA_WORKER_ENDPOINT
-        if (ep.isNotBlank() && ep != "placeholder" && ep != "\"placeholder\"" && ep != "default") ep else ""
-    } catch (_: Exception) { "" }
+        val field = BuildConfig::class.java.getField("REA_WORKER_ENDPOINT")
+        val ep = field.get(null) as? String ?: ""
+        if (ep.isNotBlank() && !ep.contains("placeholder", ignoreCase = true) && !ep.contains("default", ignoreCase = true)) ep else ""
+    } catch (_: Throwable) { "" }
 
     private val initialToken = try {
-        val tok = BuildConfig.REA_WORKER_TOKEN
-        if (tok.isNotBlank() && tok != "placeholder" && tok != "\"placeholder\"" && tok != "default") tok else ""
-    } catch (_: Exception) { "" }
+        val field = BuildConfig::class.java.getField("REA_WORKER_TOKEN")
+        val tok = field.get(null) as? String ?: ""
+        if (tok.isNotBlank() && !tok.contains("placeholder", ignoreCase = true) && !tok.contains("default", ignoreCase = true)) tok else ""
+    } catch (_: Throwable) { "" }
 
     private val _engineState = MutableStateFlow(
         ReaEngineState(
-            status = if (initialEndpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.NOT_INSTALLED,
+            status = if (initialEndpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.DISCONNECTED,
             version = "v1.4.2-core",
-            repoUrl = "https://github.com/morluto/rea",
             cloudWorkerEndpoint = initialEndpoint,
             cloudWorkerToken = initialToken,
             mcpConnected = false,
@@ -47,7 +48,7 @@ class ReaEngineManager {
                 if (initialEndpoint.isNotBlank()) {
                     "[INIT] Configured worker endpoint: $initialEndpoint. Ready to test connection."
                 } else {
-                    "[INIT] REA Backend Worker not configured. Heavy tasks (JADX decompilation & Gradle builds) require a Linux worker URL."
+                    "[INIT] REA Backend Worker not configured. Optional Linux worker URL can be configured in Settings."
                 }
             ),
             progressPercent = 0,
@@ -62,14 +63,13 @@ class ReaEngineManager {
         _engineState.value = _engineState.value.copy(
             cloudWorkerEndpoint = endpoint.trim(),
             cloudWorkerToken = token.trim(),
-            status = if (endpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.NOT_INSTALLED,
+            status = if (endpoint.isNotBlank()) EngineStatus.STOPPED else EngineStatus.DISCONNECTED,
             mcpConnected = false,
             logs = currentLogs
         )
     }
 
-    suspend fun installOrUpdateEngine(
-        repoUrl: String = "https://github.com/morluto/rea",
+    suspend fun connectWorker(
         cloudEndpoint: String = "",
         cloudToken: String = ""
     ) = withContext(Dispatchers.IO) {
@@ -83,7 +83,7 @@ class ReaEngineManager {
             logs.add("[ERROR] Invalid or unconfigured worker endpoint: '$endpoint'")
             logs.add("[HELP] Set your actual Linux worker IP or domain (e.g., http://10.0.2.2:8080 or https://your-worker.com) in Settings.")
             _engineState.value = _engineState.value.copy(
-                status = EngineStatus.NOT_INSTALLED,
+                status = EngineStatus.DISCONNECTED,
                 mcpConnected = false,
                 currentStep = "Worker Not Configured",
                 progressPercent = 0,
@@ -94,7 +94,7 @@ class ReaEngineManager {
 
         logs.add("[CONNECT] Attempting handshake with worker at $endpoint...")
         _engineState.value = _engineState.value.copy(
-            status = EngineStatus.PROVISIONING,
+            status = EngineStatus.CONNECTING,
             currentStep = "Connecting to $endpoint...",
             progressPercent = 30,
             logs = logs
@@ -131,7 +131,7 @@ class ReaEngineManager {
                     _engineState.value = _engineState.value.copy(
                         status = EngineStatus.RUNNING,
                         mcpConnected = true,
-                        currentStep = "Operational (Ping: ${latency}ms)",
+                        currentStep = "Worker reachable (Ping: ${latency}ms)",
                         progressPercent = 100,
                         cloudWorkerEndpoint = endpoint,
                         cloudWorkerToken = token,
@@ -155,11 +155,11 @@ class ReaEngineManager {
             }
         } catch (e: Exception) {
             logs.add("[FAILURE] Failed to connect to $endpoint: ${e.localizedMessage ?: e.javaClass.simpleName}")
-            logs.add("[STATUS] REA Engine requires an active backend server.")
+            logs.add("[STATUS] Optional worker is currently unreachable.")
             _engineState.value = _engineState.value.copy(
                 status = EngineStatus.ERROR,
                 mcpConnected = false,
-                currentStep = "Unreachable: ${e.localizedMessage ?: "Connection Refused"}",
+                currentStep = "Worker Unreachable: ${e.localizedMessage ?: "Connection Refused"}",
                 progressPercent = 0,
                 logs = logs
             )
@@ -207,12 +207,12 @@ class ReaEngineManager {
             httpClient.newCall(reqBuilder.build()).execute().use { resp ->
                 val latency = System.currentTimeMillis() - startTime
                 if (resp.isSuccessful) {
-                    val msg = "Healthy (${latency}ms, HTTP ${resp.code})"
+                    val msg = "Worker reachable (${latency}ms, HTTP ${resp.code})"
                     logs.add("[HEALTH-CHECK] ✓ Worker healthy: latency ${latency}ms")
                     _engineState.value = _engineState.value.copy(
                         status = EngineStatus.RUNNING,
                         mcpConnected = true,
-                        currentStep = "Operational (${latency}ms)",
+                        currentStep = "Worker reachable (${latency}ms)",
                         logs = logs
                     )
                     return@withContext msg
@@ -228,7 +228,7 @@ class ReaEngineManager {
                 }
             }
         } catch (e: Exception) {
-            val msg = "Unreachable (${e.localizedMessage ?: "Failed to connect"})"
+            val msg = "Worker Unreachable (${e.localizedMessage ?: "Failed to connect"})"
             logs.add("[HEALTH-CHECK] ✗ Error: $msg")
             _engineState.value = _engineState.value.copy(
                 status = EngineStatus.ERROR,
@@ -239,13 +239,13 @@ class ReaEngineManager {
         }
     }
 
-    fun uninstallEngine() {
+    fun disconnectWorker() {
         val logs = _engineState.value.logs.toMutableList()
-        logs.add("[WARN] REA Engine connection stopped.")
+        logs.add("[INFO] Worker connection disconnected.")
         _engineState.value = _engineState.value.copy(
             status = EngineStatus.STOPPED,
             mcpConnected = false,
-            currentStep = "Engine Stopped",
+            currentStep = "Worker Disconnected",
             progressPercent = 0,
             logs = logs
         )

@@ -3,8 +3,8 @@ package com.example.rea.data.service
 import android.content.Context
 import com.example.rea.data.model.BuildJob
 import com.example.rea.data.model.BuildStatus
-import com.example.rea.data.model.DecompiledFile
 import com.example.rea.data.model.Project
+import com.example.rea.data.model.ProjectFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +20,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -199,7 +199,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
         """.trimIndent()
 
-        val allFiles = project.files.filter { it.path != ".github/workflows/build.yml" } + DecompiledFile(
+        val allFiles = project.files.filter { it.path != ".github/workflows/build.yml" } + ProjectFile(
             id = ".github/workflows/build.yml",
             path = ".github/workflows/build.yml",
             name = "build.yml",
@@ -228,7 +228,8 @@ jobs:
         }
 
         addLog("[3/6] Triggering GitHub Actions workflow_dispatch on ref '$branch'...", 40)
-        val triggerTime = System.currentTimeMillis() - 5000 // 5 seconds buffer
+        // Record UTC dispatch time right before triggering to avoid matching stale runs (Problem 3)
+        val dispatchTime = System.currentTimeMillis()
 
         val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/build.yml/dispatches"
         val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
@@ -262,11 +263,11 @@ jobs:
 
         addLog("[4/6] Locating created workflow run...", 50)
         var runId: Long? = null
-        val maxLocateAttempts = 12
+        val maxLocateAttempts = 15
         for (i in 0 until maxLocateAttempts) {
             delay(3000)
             val runsReq = Request.Builder()
-                .url("https://api.github.com/repos/$owner/$repo/actions/runs?event=workflow_dispatch&per_page=5")
+                .url("https://api.github.com/repos/$owner/$repo/actions/workflows/build.yml/runs?event=workflow_dispatch&branch=$branch&per_page=10")
                 .header("Authorization", "Bearer $githubToken")
                 .header("Accept", "application/vnd.github+json")
                 .get()
@@ -274,16 +275,8 @@ jobs:
 
             httpClient.newCall(runsReq).execute().use { resp ->
                 if (resp.isSuccessful) {
-                    val json = JSONObject(resp.body?.string().orEmpty())
-                    val runs = json.optJSONArray("workflow_runs")
-                    if (runs != null && runs.length() > 0) {
-                        for (r in 0 until runs.length()) {
-                            val runObj = runs.getJSONObject(r)
-                            val id = runObj.getLong("id")
-                            runId = id
-                            break
-                        }
-                    }
+                    val bodyStr = resp.body?.string().orEmpty()
+                    runId = WorkflowRunSelector.selectNewestMatchingRun(bodyStr, dispatchTime, branch)
                 }
             }
             if (runId != null) break
@@ -489,6 +482,303 @@ jobs:
         )
         updateJobList(successJob)
         return@withContext successJob
+    }
+
+    /**
+     * Executes real cloud decompilation using JADX on GitHub Actions (Problem 2).
+     */
+    suspend fun startDecompileWorkflow(
+        apkBytes: ByteArray,
+        apkFileName: String,
+        githubToken: String,
+        owner: String,
+        repo: String,
+        branch: String = "main",
+        onLog: (log: String, progress: Int) -> Unit
+    ): Result<List<ProjectFile>> = withContext(Dispatchers.IO) {
+        val maxSizeBytes = 50 * 1024 * 1024L // 50 MB GitHub Contents API limit
+        if (apkBytes.size > maxSizeBytes) {
+            val sizeMb = String.format(java.util.Locale.US, "%.1f", apkBytes.size / (1024.0 * 1024.0))
+            val msg = "APK size ($sizeMb MB) exceeds GitHub contents API limit (50 MB). Please choose an APK under 50 MB for cloud decompilation."
+            onLog("[ERROR] $msg", 100)
+            return@withContext Result.failure(IllegalArgumentException(msg))
+        }
+
+        if (githubToken.isBlank() || owner.isBlank() || repo.isBlank()) {
+            val msg = "GitHub token, owner, or repo is not configured in Settings."
+            onLog("[ERROR] $msg", 100)
+            return@withContext Result.failure(IllegalStateException(msg))
+        }
+
+        val ghService = GitHubService()
+
+        onLog("[1/6] Pushing selected APK (${apkBytes.size} bytes) to GitHub repo as app.apk...", 10)
+        val pushApkResult = ghService.pushBinaryFile(
+            token = githubToken,
+            owner = owner,
+            repo = repo,
+            path = "app.apk",
+            bytes = apkBytes,
+            commitMessage = "Upload target APK for JADX decompilation via REA Studio",
+            branch = branch
+        )
+        if (pushApkResult.isFailure) {
+            val err = pushApkResult.exceptionOrNull()?.message ?: "Failed to upload APK to repository"
+            onLog("[ERROR] $err", 100)
+            return@withContext Result.failure(IOException(err))
+        }
+
+        onLog("[2/6] Configuring .github/workflows/decompile.yml with pinned JADX release...", 20)
+        val decompileYaml = """
+name: Decompile APK with JADX
+on:
+  workflow_dispatch:
+
+jobs:
+  decompile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Download and setup JADX 1.5.0
+        run: |
+          curl -sL "https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip" -o jadx.zip
+          unzip -q jadx.zip -d jadx
+          chmod +x jadx/bin/jadx
+      - name: Run JADX decompiler
+        run: |
+          mkdir -p out
+          ./jadx/bin/jadx -d out app.apk || true
+      - name: Upload Decompiled Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jadx-decompiled
+          path: out/
+        """.trimIndent()
+
+        val pushWorkflowResult = ghService.pushTextFile(
+            token = githubToken,
+            owner = owner,
+            repo = repo,
+            path = ".github/workflows/decompile.yml",
+            content = decompileYaml,
+            commitMessage = "Add JADX decompilation workflow",
+            branch = branch
+        )
+        if (pushWorkflowResult.isFailure) {
+            val err = pushWorkflowResult.exceptionOrNull()?.message ?: "Failed to push decompile workflow"
+            onLog("[ERROR] $err", 100)
+            return@withContext Result.failure(IOException(err))
+        }
+
+        onLog("[3/6] Triggering workflow_dispatch for decompile.yml on branch '$branch'...", 35)
+        val dispatchTime = System.currentTimeMillis()
+        val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/decompile.yml/dispatches"
+        val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
+        val dispatchReq = Request.Builder()
+            .url(dispatchUrl)
+            .header("Authorization", "Bearer $githubToken")
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .post(dispatchBody.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        var dispatched = false
+        httpClient.newCall(dispatchReq).execute().use { resp ->
+            if (resp.code == 204) {
+                dispatched = true
+                onLog("[SUCCESS] Decompile workflow dispatch accepted (HTTP 204).", 40)
+            } else {
+                val err = resp.body?.string().orEmpty()
+                val msg = "Decompile dispatch rejected (HTTP ${resp.code}): $err"
+                onLog("[ERROR] $msg", 100)
+                return@withContext Result.failure(IOException(msg))
+            }
+        }
+
+        onLog("[4/6] Locating created decompile workflow run...", 45)
+        var runId: Long? = null
+        val maxLocateAttempts = 15
+        for (i in 0 until maxLocateAttempts) {
+            delay(3000)
+            val runsReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/workflows/decompile.yml/runs?event=workflow_dispatch&branch=$branch&per_page=10")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            httpClient.newCall(runsReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val bodyStr = resp.body?.string().orEmpty()
+                    runId = WorkflowRunSelector.selectNewestMatchingRun(bodyStr, dispatchTime, branch)
+                }
+            }
+            if (runId != null) break
+        }
+
+        if (runId == null) {
+            val msg = "Could not locate JADX decompile workflow run on GitHub within timeout."
+            onLog("[ERROR] $msg", 100)
+            return@withContext Result.failure(IllegalStateException(msg))
+        }
+
+        onLog("[5/6] Decompile run #$runId active. Polling JADX execution on GitHub Actions...", 55)
+        var finalConclusion: String? = null
+        val maxPollTimeMs = 15 * 60 * 1000L
+        val startPollTime = System.currentTimeMillis()
+
+        while (System.currentTimeMillis() - startPollTime < maxPollTimeMs) {
+            delay(5000)
+            val pollReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            var runStatus = "in_progress"
+            var runConclusion: String? = null
+            httpClient.newCall(pollReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val json = JSONObject(resp.body?.string().orEmpty())
+                    runStatus = json.optString("status", "in_progress")
+                    if (json.has("conclusion") && !json.isNull("conclusion")) {
+                        runConclusion = json.getString("conclusion")
+                    }
+                }
+            }
+
+            // Step status from jobs API
+            try {
+                val jobsReq = Request.Builder()
+                    .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId/jobs")
+                    .header("Authorization", "Bearer $githubToken")
+                    .header("Accept", "application/vnd.github+json")
+                    .get()
+                    .build()
+
+                httpClient.newCall(jobsReq).execute().use { jResp ->
+                    if (jResp.isSuccessful) {
+                        val jobsArr = JSONObject(jResp.body?.string().orEmpty()).optJSONArray("jobs")
+                        if (jobsArr != null && jobsArr.length() > 0) {
+                            val firstJob = jobsArr.getJSONObject(0)
+                            val stepsArr = firstJob.optJSONArray("steps") ?: JSONArray()
+                            for (s in 0 until stepsArr.length()) {
+                                val stepObj = stepsArr.getJSONObject(s)
+                                val sName = stepObj.optString("name")
+                                val sStatus = stepObj.optString("status")
+                                val sConclusion = stepObj.optString("conclusion", "")
+                                onLog("[STEP] $sName ($sStatus ${if (sConclusion.isNotBlank()) "- $sConclusion" else ""})", 70)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (runStatus == "completed") {
+                finalConclusion = runConclusion
+                break
+            }
+        }
+
+        if (finalConclusion != "success") {
+            val msg = "JADX decompilation workflow concluded with: $finalConclusion"
+            onLog("[ERROR] $msg", 100)
+            return@withContext Result.failure(IllegalStateException(msg))
+        }
+
+        onLog("[6/6] Decompilation succeeded! Downloading artifact and extracting source files...", 85)
+        val extractedFiles = mutableListOf<ProjectFile>()
+        try {
+            val artReq = Request.Builder()
+                .url("https://api.github.com/repos/$owner/$repo/actions/runs/$runId/artifacts")
+                .header("Authorization", "Bearer $githubToken")
+                .header("Accept", "application/vnd.github+json")
+                .get()
+                .build()
+
+            var downloadUrl: String? = null
+            httpClient.newCall(artReq).execute().use { aResp ->
+                if (aResp.isSuccessful) {
+                    val aJson = JSONObject(aResp.body?.string().orEmpty())
+                    val artifacts = aJson.optJSONArray("artifacts")
+                    if (artifacts != null && artifacts.length() > 0) {
+                        downloadUrl = artifacts.getJSONObject(0).optString("archive_download_url")
+                    }
+                }
+            }
+
+            if (downloadUrl == null) {
+                val msg = "No artifact found in completed decompile workflow run."
+                onLog("[ERROR] $msg", 100)
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
+            val dlReq = Request.Builder()
+                .url(downloadUrl!!)
+                .header("Authorization", "Bearer $githubToken")
+                .get()
+                .build()
+
+            val decompiledHeader = "// Decompiled by JADX (approximate, may not recompile)\n// Notice: Use only on apps you own or are authorized to analyze.\n\n"
+
+            httpClient.newCall(dlReq).execute().use { dlResp ->
+                if (dlResp.isSuccessful && dlResp.body != null) {
+                    val zis = ZipInputStream(dlResp.body!!.byteStream())
+                    var entry: ZipEntry? = zis.nextEntry
+                    var count = 0
+                    while (entry != null && count < 250) {
+                        if (!entry.isDirectory) {
+                            val name = entry.name
+                            val isText = name.endsWith(".java") || name.endsWith(".kt") ||
+                                    name.endsWith(".xml") || name.endsWith(".gradle") ||
+                                    name.endsWith(".json") || name.endsWith(".properties") ||
+                                    name.endsWith(".txt")
+                            if (isText && entry.size < 1_000_000L) {
+                                val baos = ByteArrayOutputStream()
+                                val buf = ByteArray(8192)
+                                var len: Int
+                                while (zis.read(buf).also { len = it } != -1) {
+                                    baos.write(buf, 0, len)
+                                }
+                                val textContent = baos.toString(Charsets.UTF_8.name())
+                                val lang = when {
+                                    name.endsWith(".kt") -> "kotlin"
+                                    name.endsWith(".java") -> "java"
+                                    name.endsWith(".xml") -> "xml"
+                                    name.endsWith(".gradle") || name.endsWith(".gradle.kts") -> "gradle"
+                                    name.endsWith(".json") -> "json"
+                                    else -> "text"
+                                }
+                                extractedFiles.add(
+                                    ProjectFile(
+                                        id = name,
+                                        path = name,
+                                        name = File(name).name,
+                                        language = lang,
+                                        content = decompiledHeader + textContent
+                                    )
+                                )
+                                count++
+                            }
+                        }
+                        entry = zis.nextEntry
+                    }
+                }
+            }
+            onLog("[SUCCESS] Extracted ${extractedFiles.size} decompiled files from JADX artifact.", 100)
+            Result.success(extractedFiles)
+        } catch (e: Exception) {
+            val msg = "Failed to download or parse decompiled artifact: ${e.message}"
+            onLog("[ERROR] $msg", 100)
+            Result.failure(e)
+        }
     }
 
     /**

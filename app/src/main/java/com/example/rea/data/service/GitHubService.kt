@@ -100,7 +100,8 @@ class GitHubService {
                 httpClient.newCall(getReq).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body?.string().orEmpty()
-                        existingSha = JSONObject(body).optString("sha", null)
+                        val sha = JSONObject(body).optString("sha", "")
+                        if (sha.isNotBlank()) existingSha = sha
                     }
                 }
 
@@ -131,5 +132,68 @@ class GitHubService {
             }
         }
         Result.success(Unit)
+    }
+
+    suspend fun pushBinaryFile(
+        token: String,
+        owner: String,
+        repo: String,
+        path: String,
+        bytes: ByteArray,
+        commitMessage: String = "Upload file via REA Studio",
+        branch: String = "main"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val getReq = newRequestBuilder(token)
+                .url("https://api.github.com/repos/$owner/$repo/contents/$path?ref=$branch")
+                .get()
+                .build()
+
+            var existingSha: String? = null
+            httpClient.newCall(getReq).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string().orEmpty()
+                    val sha = JSONObject(body).optString("sha", "")
+                    if (sha.isNotBlank()) existingSha = sha
+                }
+            }
+
+            val b64Content = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val putBody = JSONObject().apply {
+                put("message", commitMessage)
+                put("content", b64Content)
+                put("branch", branch)
+                if (existingSha != null) {
+                    put("sha", existingSha)
+                }
+            }
+
+            val putReq = newRequestBuilder(token)
+                .url("https://api.github.com/repos/$owner/$repo/contents/$path")
+                .put(putBody.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(putReq).execute().use { putResp ->
+                if (!putResp.isSuccessful && putResp.code != 200 && putResp.code != 201) {
+                    val err = putResp.body?.string().orEmpty()
+                    return@withContext Result.failure(IOException("Failed to push $path (HTTP ${putResp.code}): $err"))
+                }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun pushTextFile(
+        token: String,
+        owner: String,
+        repo: String,
+        path: String,
+        content: String,
+        commitMessage: String,
+        branch: String = "main"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        pushBinaryFile(token, owner, repo, path, content.toByteArray(Charsets.UTF_8), commitMessage, branch)
     }
 }

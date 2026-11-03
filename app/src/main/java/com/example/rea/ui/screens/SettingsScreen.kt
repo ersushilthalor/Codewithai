@@ -442,10 +442,11 @@ fun SettingsScreen(
                             Text("REA Backend Worker", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
                             Text(
                                 text = when (engineState.status) {
-                                    com.example.rea.data.model.EngineStatus.RUNNING -> "Connected • MCP Tools Active"
-                                    com.example.rea.data.model.EngineStatus.ERROR -> "Connection Failed • Check URL"
+                                    com.example.rea.data.model.EngineStatus.RUNNING -> "Worker reachable • MCP Tools Active"
+                                    com.example.rea.data.model.EngineStatus.CONNECTING -> "Connecting to worker..."
+                                    com.example.rea.data.model.EngineStatus.ERROR -> "Worker Unreachable • Check URL"
                                     com.example.rea.data.model.EngineStatus.STOPPED -> "Configured • Stopped"
-                                    else -> "NOT CONFIGURED • Optional Worker"
+                                    else -> "Not Connected • Optional Worker"
                                 },
                                 fontSize = 11.sp,
                                 color = if (engineState.mcpConnected) CleanGreen else if (engineState.status == com.example.rea.data.model.EngineStatus.ERROR) CleanRed else TextMuted
@@ -509,11 +510,38 @@ fun SettingsScreen(
                                 isEditingWorker = false
                                 Toast.makeText(context, "Worker URL saved!", Toast.LENGTH_SHORT).show()
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanSurfaceLight, contentColor = TextMain),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Save Worker Configuration")
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    viewModel.engineManager.connectWorker(workerUrlInput, workerTokenInput)
+                                    Toast.makeText(context, "Handshake initiated with worker...", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("connect_worker_btn")
+                        ) {
+                            Text("Connect worker (optional)")
+                        }
+                        if (engineState.status == com.example.rea.data.model.EngineStatus.RUNNING) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.engineManager.disconnectWorker()
+                                    Toast.makeText(context, "Worker disconnected", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("disconnect_worker_btn")
+                            ) {
+                                Text("Disconnect worker", color = CleanRed)
+                            }
                         }
                     }
                 }

@@ -78,13 +78,13 @@ fun ReconstructionScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Generate App Scaffold",
-                                fontSize = 18.sp,
+                                text = "Scaffold from manifest - not decompiled",
+                                fontSize = 17.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = TextMain
                             )
                             Text(
-                                text = "Synthesizes Jetpack Compose scaffold from audited APK evidence",
+                                text = "Synthesizes Jetpack Compose architecture scaffold from manifest metadata",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -109,7 +109,7 @@ fun ReconstructionScreen(
                         color = CleanBlue
                     )
                     Text(
-                        text = if (analysis != null) "Clean-room scaffold derived from manifest components" else "Pick an APK from the Home screen first",
+                        text = if (analysis != null) "Clean-room scaffold derived from manifest components (not decompiled bytecode)" else "Pick an APK from the Home screen first",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -131,7 +131,20 @@ fun ReconstructionScreen(
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (progress.isReconstructing) "Generating Scaffold..." else "Generate Scaffold", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(if (progress.isReconstructing) "Generating Scaffold..." else "Scaffold from manifest - not decompiled", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { viewModel.triggerJadxDecompilation() },
+                        enabled = analysis != null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = CleanPurple)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Decompile (JADX)", fontSize = 13.sp, color = CleanPurple, fontWeight = FontWeight.Bold)
                     }
                 }
             }

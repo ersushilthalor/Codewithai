@@ -206,12 +206,29 @@ fun CodeWorkspaceScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = selectedFile?.path ?: "Select a file to edit",
-                        fontSize = 11.sp,
-                        color = TextMuted,
-                        fontFamily = FontFamily.Monospace
-                    )
+                    val fileContent = selectedFile?.content.orEmpty()
+                    val provenanceLabel = when {
+                        fileContent.contains("Decompiled by JADX") -> "Decompiled by JADX (approximate, may not recompile)"
+                        fileContent.contains("Scaffold generated from manifest") -> "Scaffold from manifest - not decompiled"
+                        else -> null
+                    }
+
+                    Column {
+                        Text(
+                            text = selectedFile?.path ?: "Select a file to edit",
+                            fontSize = 11.sp,
+                            color = TextMain,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        if (provenanceLabel != null) {
+                            Text(
+                                text = provenanceLabel,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (provenanceLabel.startsWith("Decompiled")) CleanPurple else CleanOrange
+                            )
+                        }
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(

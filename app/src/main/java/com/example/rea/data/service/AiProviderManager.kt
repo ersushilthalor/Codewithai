@@ -123,14 +123,16 @@ class AiProviderManager(private val context: Context? = null) {
         if (persisted.isNotEmpty()) return persisted
 
         val geminiKey = try {
-            val k = BuildConfig.GEMINI_API_KEY
-            if (k.isNotBlank() && k != "placeholder" && k != "\"placeholder\"" && k != "default") k else ""
-        } catch (_: Exception) { "" }
+            val field = BuildConfig::class.java.getField("GEMINI_API_KEY")
+            val k = field.get(null) as? String ?: ""
+            if (k.isNotBlank() && !k.contains("placeholder", ignoreCase = true) && !k.contains("default", ignoreCase = true)) k else ""
+        } catch (_: Throwable) { "" }
 
         val openaiKey = try {
-            val k = BuildConfig.OPENAI_API_KEY
-            if (k.isNotBlank() && k != "placeholder" && k != "\"placeholder\"" && k != "default") k else ""
-        } catch (_: Exception) { "" }
+            val field = BuildConfig::class.java.getField("OPENAI_API_KEY")
+            val k = field.get(null) as? String ?: ""
+            if (k.isNotBlank() && !k.contains("placeholder", ignoreCase = true) && !k.contains("default", ignoreCase = true)) k else ""
+        } catch (_: Throwable) { "" }
 
         return listOf(
             AiProvider(

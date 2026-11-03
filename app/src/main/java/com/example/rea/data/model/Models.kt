@@ -1,9 +1,8 @@
 package com.example.rea.data.model
 
 data class ReaEngineState(
-    val status: EngineStatus = EngineStatus.NOT_INSTALLED,
+    val status: EngineStatus = EngineStatus.DISCONNECTED,
     val version: String = "v1.4.2-core",
-    val repoUrl: String = "https://github.com/morluto/rea",
     val cloudWorkerEndpoint: String = "",
     val cloudWorkerToken: String = "",
     val mcpConnected: Boolean = false,
@@ -18,14 +17,8 @@ data class ReaEngineState(
 )
 
 enum class EngineStatus {
-    NOT_INSTALLED,
-    PROVISIONING,
-    INSTALLING_NODE,
-    INSTALLING_PROCPS,
-    FETCHING_REPO,
-    INSTALLING_DEPS,
-    CONFIGURING_MCP,
-    VERIFYING_TOOLS,
+    DISCONNECTED,
+    CONNECTING,
     RUNNING,
     ERROR,
     STOPPED
@@ -109,7 +102,7 @@ data class ApkResourceItem(
     val previewContent: String? = null
 )
 
-data class DecompiledFile(
+data class ProjectFile(
     val id: String,
     val path: String,
     val name: String,
@@ -117,6 +110,8 @@ data class DecompiledFile(
     val content: String,
     val isModified: Boolean = false
 )
+
+typealias DecompiledFile = ProjectFile
 
 data class SecurityFinding(
     val title: String,
@@ -254,7 +249,7 @@ data class ApkExportCardData(
 )
 
 enum class ChatMode(val title: String, val subtitle: String) {
-    FULL_REBUILD("Full Rebuild", "Complete Decompile & Rebuild"),
+    FULL_REBUILD("Full Rebuild", "Scaffold Architecture & Codebase Rebuild"),
     UI_CLONE("UI Clone", "Extract & Generate Compose UI"),
     SECURITY_AUDIT("Security Audit", "Permissions & Vulnerabilities"),
     FEATURE_INJECT("Feature Injection", "Inject Mods & Custom Logic"),

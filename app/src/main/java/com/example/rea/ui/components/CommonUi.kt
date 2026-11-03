@@ -85,9 +85,9 @@ fun ReaTopBar(
                             else -> CleanOrange
                         }
                         val statusText = when (engineStatus) {
-                            com.example.rea.data.model.EngineStatus.RUNNING -> "Worker Connected • $activeProviderName"
+                            com.example.rea.data.model.EngineStatus.RUNNING -> "Worker reachable • $activeProviderName"
                             com.example.rea.data.model.EngineStatus.ERROR -> "Worker Error • $activeProviderName"
-                            else -> "On-Device Engine • $activeProviderName"
+                            else -> "Local Analysis • $activeProviderName"
                         }
                         Box(
                             modifier = Modifier
