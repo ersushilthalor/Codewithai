@@ -144,7 +144,30 @@ fun ReconstructionScreen(
                     ) {
                         Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = CleanPurple)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Decompile (JADX)", fontSize = 13.sp, color = CleanPurple, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = CleanBlue.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBlue.copy(alpha = 0.25f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Lock, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("GitHub Cloud Decompilation Notice", fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = TextMain)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Decompilation commits the APK to your GitHub repository (as 'app.apk') and executes JADX in the cloud. Use a private repository. Target repo must exist or will be created automatically. Max size: 50 MB.",
+                                fontSize = 10.sp,
+                                color = TextMuted,
+                                lineHeight = 14.sp
+                            )
+                        }
                     }
                 }
             }

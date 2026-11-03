@@ -123,6 +123,54 @@ class CloudBuilderService(private val context: Context? = null) {
         persistBuildJobs()
     }
 
+    suspend fun dispatchWorkflowWithRetry(
+        token: String,
+        owner: String,
+        repo: String,
+        workflowFileName: String,
+        branch: String,
+        maxAttempts: Int = 4,
+        delayMs: Long = 3500L,
+        onLog: (String) -> Unit
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/$workflowFileName/dispatches"
+        val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
+        var lastErr = ""
+
+        for (attempt in 1..maxAttempts) {
+            val dispatchReq = Request.Builder()
+                .url(dispatchUrl)
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .post(dispatchBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val (code, body) = try {
+                httpClient.newCall(dispatchReq).execute().use { resp ->
+                    resp.code to resp.body?.string().orEmpty()
+                }
+            } catch (e: Exception) {
+                0 to (e.message ?: "Network error")
+            }
+
+            if (code == 204) {
+                onLog("[SUCCESS] Workflow dispatch accepted for $workflowFileName (HTTP 204).")
+                return@withContext Result.success(Unit)
+            } else if (code == 404 && attempt < maxAttempts) {
+                onLog("[INFO] Workflow $workflowFileName not ready yet on GitHub (registering...). Retrying attempt $attempt/$maxAttempts in ${delayMs / 1000}s...")
+                delay(delayMs)
+            } else {
+                lastErr = "HTTP $code - $body"
+                if (attempt < maxAttempts) {
+                    onLog("[INFO] Dispatch returned $code. Retrying attempt $attempt/$maxAttempts in ${delayMs / 1000}s...")
+                    delay(delayMs)
+                }
+            }
+        }
+        Result.failure(IOException("Workflow $workflowFileName trigger rejected after $maxAttempts attempts: $lastErr"))
+    }
+
     /**
      * Executes real cloud build using GitHub Actions (F2).
      */
@@ -231,34 +279,28 @@ jobs:
         // Record UTC dispatch time right before triggering to avoid matching stale runs (Problem 3)
         val dispatchTime = System.currentTimeMillis()
 
-        val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/build.yml/dispatches"
-        val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
-        val dispatchReq = Request.Builder()
-            .url(dispatchUrl)
-            .header("Authorization", "Bearer $githubToken")
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .post(dispatchBody.toRequestBody("application/json".toMediaType()))
-            .build()
+        val dispatchResult = dispatchWorkflowWithRetry(
+            token = githubToken,
+            owner = owner,
+            repo = repo,
+            workflowFileName = "build.yml",
+            branch = branch,
+            maxAttempts = 4,
+            delayMs = 3500L
+        ) { logMsg -> addLog(logMsg, 45) }
 
-        var dispatched = false
-        httpClient.newCall(dispatchReq).execute().use { resp ->
-            if (resp.code == 204) {
-                dispatched = true
-                addLog("[SUCCESS] Workflow dispatch accepted (HTTP 204).", 45)
-            } else {
-                val err = resp.body?.string().orEmpty()
-                addLog("[ERROR] Workflow dispatch rejected (HTTP ${resp.code}): $err", 100)
-                val failed = initialJob.copy(
-                    status = BuildStatus.FAILED,
-                    errorReason = "Workflow trigger rejected: HTTP ${resp.code} - $err",
-                    finishedAt = System.currentTimeMillis(),
-                    progressPercent = 100,
-                    logs = logs.toList()
-                )
-                updateJobList(failed)
-                return@withContext failed
-            }
+        if (dispatchResult.isFailure) {
+            val err = dispatchResult.exceptionOrNull()?.message ?: "Workflow dispatch rejected"
+            addLog("[ERROR] $err", 100)
+            val failed = initialJob.copy(
+                status = BuildStatus.FAILED,
+                errorReason = err,
+                finishedAt = System.currentTimeMillis(),
+                progressPercent = 100,
+                logs = logs.toList()
+            )
+            updateJobList(failed)
+            return@withContext failed
         }
 
         addLog("[4/6] Locating created workflow run...", 50)
@@ -553,12 +595,17 @@ jobs:
       - name: Run JADX decompiler
         run: |
           mkdir -p out
-          ./jadx/bin/jadx -d out app.apk || true
+          ./jadx/bin/jadx -d out app.apk || JADX_EXIT=${'$'}?
+          if [ ! -d out ] || [ -z "${'$'}(ls -A out)" ]; then
+            echo "Error: JADX failed to produce any decompiled files in out/."
+            exit 1
+          fi
       - name: Upload Decompiled Artifact
         uses: actions/upload-artifact@v4
         with:
           name: jadx-decompiled
           path: out/
+          if-no-files-found: error
         """.trimIndent()
 
         val pushWorkflowResult = ghService.pushTextFile(
@@ -578,27 +625,20 @@ jobs:
 
         onLog("[3/6] Triggering workflow_dispatch for decompile.yml on branch '$branch'...", 35)
         val dispatchTime = System.currentTimeMillis()
-        val dispatchUrl = "https://api.github.com/repos/$owner/$repo/actions/workflows/decompile.yml/dispatches"
-        val dispatchBody = JSONObject().apply { put("ref", branch) }.toString()
-        val dispatchReq = Request.Builder()
-            .url(dispatchUrl)
-            .header("Authorization", "Bearer $githubToken")
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .post(dispatchBody.toRequestBody("application/json".toMediaType()))
-            .build()
+        val dispatchResult = dispatchWorkflowWithRetry(
+            token = githubToken,
+            owner = owner,
+            repo = repo,
+            workflowFileName = "decompile.yml",
+            branch = branch,
+            maxAttempts = 4,
+            delayMs = 3500L
+        ) { logMsg -> onLog(logMsg, 40) }
 
-        var dispatched = false
-        httpClient.newCall(dispatchReq).execute().use { resp ->
-            if (resp.code == 204) {
-                dispatched = true
-                onLog("[SUCCESS] Decompile workflow dispatch accepted (HTTP 204).", 40)
-            } else {
-                val err = resp.body?.string().orEmpty()
-                val msg = "Decompile dispatch rejected (HTTP ${resp.code}): $err"
-                onLog("[ERROR] $msg", 100)
-                return@withContext Result.failure(IOException(msg))
-            }
+        if (dispatchResult.isFailure) {
+            val err = dispatchResult.exceptionOrNull()?.message ?: "Decompile dispatch failed"
+            onLog("[ERROR] $err", 100)
+            return@withContext Result.failure(IOException(err))
         }
 
         onLog("[4/6] Locating created decompile workflow run...", 45)
@@ -726,54 +766,24 @@ jobs:
                 .get()
                 .build()
 
-            val decompiledHeader = "// Decompiled by JADX (approximate, may not recompile)\n// Notice: Use only on apps you own or are authorized to analyze.\n\n"
-
+            var extractionResult: JadxExtractionResult? = null
             httpClient.newCall(dlReq).execute().use { dlResp ->
                 if (dlResp.isSuccessful && dlResp.body != null) {
-                    val zis = ZipInputStream(dlResp.body!!.byteStream())
-                    var entry: ZipEntry? = zis.nextEntry
-                    var count = 0
-                    while (entry != null && count < 250) {
-                        if (!entry.isDirectory) {
-                            val name = entry.name
-                            val isText = name.endsWith(".java") || name.endsWith(".kt") ||
-                                    name.endsWith(".xml") || name.endsWith(".gradle") ||
-                                    name.endsWith(".json") || name.endsWith(".properties") ||
-                                    name.endsWith(".txt")
-                            if (isText && entry.size < 1_000_000L) {
-                                val baos = ByteArrayOutputStream()
-                                val buf = ByteArray(8192)
-                                var len: Int
-                                while (zis.read(buf).also { len = it } != -1) {
-                                    baos.write(buf, 0, len)
-                                }
-                                val textContent = baos.toString(Charsets.UTF_8.name())
-                                val lang = when {
-                                    name.endsWith(".kt") -> "kotlin"
-                                    name.endsWith(".java") -> "java"
-                                    name.endsWith(".xml") -> "xml"
-                                    name.endsWith(".gradle") || name.endsWith(".gradle.kts") -> "gradle"
-                                    name.endsWith(".json") -> "json"
-                                    else -> "text"
-                                }
-                                extractedFiles.add(
-                                    ProjectFile(
-                                        id = name,
-                                        path = name,
-                                        name = File(name).name,
-                                        language = lang,
-                                        content = decompiledHeader + textContent
-                                    )
-                                )
-                                count++
-                            }
-                        }
-                        entry = zis.nextEntry
-                    }
+                    extractionResult = JadxArtifactExtractor.extract(dlResp.body!!.byteStream())
                 }
             }
-            onLog("[SUCCESS] Extracted ${extractedFiles.size} decompiled files from JADX artifact.", 100)
-            Result.success(extractedFiles)
+
+            val files = extractionResult?.files ?: emptyList()
+            val skipped = extractionResult?.skippedCount ?: 0
+            if (files.isEmpty()) {
+                val msg = "No valid source files could be extracted from decompiled artifact."
+                onLog("[ERROR] $msg", 100)
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
+            val skipNote = if (skipped > 0) " ($skipped files skipped due to memory limit)" else ""
+            onLog("[SUCCESS] Extracted ${files.size} decompiled files from JADX artifact$skipNote.", 100)
+            Result.success(files)
         } catch (e: Exception) {
             val msg = "Failed to download or parse decompiled artifact: ${e.message}"
             onLog("[ERROR] $msg", 100)

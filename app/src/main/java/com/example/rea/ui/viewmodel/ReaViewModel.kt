@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
@@ -364,11 +365,72 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _isDecompiling.value = true
-            _decompileLog.value = "Reading APK file from storage..."
+            _decompileLog.value = "Checking APK size before loading..."
 
+            val contentResolver = getApplication<Application>().contentResolver
+            val maxSizeBytes = 50 * 1024 * 1024L // 50 MB GitHub API contents limit
+
+            // Inspect file size via OpenableColumns or counting stream without full memory load
+            val fileSize = withContext(Dispatchers.IO) {
+                var size = -1L
+                try {
+                    contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                            if (sizeIndex != -1 && !cursor.isNull(sizeIndex)) {
+                                size = cursor.getLong(sizeIndex)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                if (size <= 0L) {
+                    try {
+                        contentResolver.openInputStream(uri)?.use { stream ->
+                            var counted = 0L
+                            val buf = ByteArray(8192)
+                            var read: Int
+                            while (stream.read(buf).also { read = it } != -1) {
+                                counted += read
+                                if (counted > maxSizeBytes) {
+                                    return@withContext counted
+                                }
+                            }
+                            size = counted
+                        }
+                    } catch (_: Exception) {}
+                }
+                size
+            }
+
+            if (fileSize > maxSizeBytes) {
+                _isDecompiling.value = false
+                val sizeMb = "%.1f".format(fileSize / (1024.0 * 1024.0))
+                val msg = "APK size ($sizeMb MB) exceeds the 50 MB GitHub contents API limit."
+                _decompileLog.value = "[ERROR] $msg"
+                Toast.makeText(getApplication(), msg, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
+            // Verify or create target repository
+            _decompileLog.value = "Verifying target repository '$owner/$repo'..."
+            val repoExists = gitHubService.checkRepoExists(token, owner, repo)
+            if (!repoExists) {
+                _decompileLog.value = "Repository '$owner/$repo' not found. Creating private repository..."
+                val createRes = gitHubService.createRepo(token, repo)
+                if (createRes.isFailure) {
+                    val err = createRes.exceptionOrNull()?.message ?: "Failed to create private GitHub repository"
+                    _isDecompiling.value = false
+                    _decompileLog.value = "[ERROR] $err"
+                    Toast.makeText(getApplication(), err, Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+            }
+
+            _decompileLog.value = "Reading APK into memory for upload..."
             val apkBytes = withContext(Dispatchers.IO) {
                 try {
-                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 } catch (_: Exception) { null }
             }
 
@@ -394,13 +456,21 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
             if (result.isSuccess) {
                 val files = result.getOrNull() ?: emptyList()
                 val currentProj = projectRepository.getCurrentProject()
-                if (currentProj != null) {
-                    projectRepository.updateProjectFiles(currentProj.id, files)
-                    if (files.isNotEmpty()) {
-                        _selectedFile.value = files.first()
-                    }
+                val baseName = currentProj?.name ?: "App"
+                val jadxProjectName = "$baseName (JADX)"
+                val jadxPkg = currentProj?.packageName ?: "com.decompiled.jadx"
+
+                val newProj = projectRepository.createProjectWithFiles(
+                    name = jadxProjectName,
+                    packageName = jadxPkg,
+                    targetApkName = currentProj?.targetApkName ?: "app.apk",
+                    files = files,
+                    analysis = currentProj?.analysisResult
+                )
+                if (files.isNotEmpty()) {
+                    _selectedFile.value = files.first()
                 }
-                Toast.makeText(getApplication(), "✓ Decompiled ${files.size} files with JADX!", Toast.LENGTH_LONG).show()
+                Toast.makeText(getApplication(), "✓ Decompiled ${files.size} files into separate project '$jadxProjectName'", Toast.LENGTH_LONG).show()
                 _currentScreen.value = ScreenDestination.CODE_EDITOR
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Decompilation failed"

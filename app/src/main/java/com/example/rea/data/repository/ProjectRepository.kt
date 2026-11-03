@@ -239,6 +239,30 @@ class ProjectRepository(private val context: Context) {
         return newProj
     }
 
+    fun createProjectWithFiles(
+        name: String,
+        packageName: String,
+        targetApkName: String?,
+        files: List<ProjectFile>,
+        analysis: ApkAnalysisResult? = null
+    ): Project {
+        val projId = "proj_" + UUID.randomUUID().toString().take(8)
+        val normalizedFiles = files.map { it.copy(id = it.path) }
+        val newProj = Project(
+            id = projId,
+            name = name,
+            packageName = packageName,
+            targetApkName = targetApkName,
+            analysisResult = analysis,
+            files = normalizedFiles
+        )
+        persistProjectFiles(newProj)
+        saveProjectMeta(newProj)
+        _projects.value = listOf(newProj) + _projects.value
+        _currentProjectId.value = newProj.id
+        return newProj
+    }
+
     fun updateProjectAnalysis(projectId: String, analysis: ApkAnalysisResult) {
         _projects.value = _projects.value.map {
             if (it.id == projectId) {

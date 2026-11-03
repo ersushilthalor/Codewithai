@@ -53,6 +53,33 @@ fun CodeWorkspaceScreen(
     ) {
         Spacer(modifier = Modifier.height(6.dp))
 
+        if (project?.name?.contains("(JADX)") == true) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = CleanYellow.copy(alpha = 0.12f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CleanYellow.copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = CleanYellow,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Note: JADX output is approximate reverse-engineered source and is not a buildable Gradle project.",
+                        fontSize = 11.sp,
+                        color = TextMain
+                    )
+                }
+            }
+        }
+
         // File Selector Pills with Add File action
         val files = project?.files ?: emptyList()
         Row(

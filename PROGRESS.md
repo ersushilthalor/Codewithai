@@ -81,7 +81,17 @@
 - [x] Verified `signingConfigs` and signing assignments remain intact.
 - [x] Protected Android Keystore secrets: set `android:allowBackup="false"` in `AndroidManifest.xml`.
 - [x] Configured `backup_rules.xml` and `data_extraction_rules.xml` to explicitly exclude Keystore-encrypted SharedPreferences (`rea_secrets.xml`, `rea_providers.xml`, `rea_github_config.xml`).
-- [x] Quoted empty secret keys in `.env.example` to ensure Secrets Gradle Plugin generates valid Java String literals.
+- [x] Verified .env.example defines empty environment secret templates for Secrets Gradle Plugin.
+
+### Round 2 Fixes (Cloud JADX Decompile & GitHub Actions Reliability)
+- [x] `.github/workflows/android.yml`: Added explicit `chmod +x ./gradlew` step before execution and marked executable in git.
+- [x] JADX Artifact Extraction (`JadxArtifactExtractor.kt`): Prioritizes `AndroidManifest.xml` (priority 0) and `sources/` (priority 1) over `resources/` (priority 3). Raised 250 file cap to 35 MB total text buffer / 3,000 files, and accurately reports count of skipped files to the user.
+- [x] Pre-load APK Size Enforcement: `ReaViewModel.triggerJadxDecompilation` queries `OpenableColumns.SIZE` (or a counting stream) to reject APKs over 50 MB before calling `readBytes()` to prevent unnecessary memory allocations.
+- [x] Separate Project Isolation: JADX decompilation results are saved as a separate project (`"<app> (JADX)"`) rather than overwriting active scaffold files. Banner note in `CodeWorkspaceScreen` clearly indicates JADX output is approximate reverse-engineered source and not a buildable Gradle project.
+- [x] GitHub Actions Workflow Dispatch Retry: Added 4-attempt retry with 3.5s delay around `workflow_dispatch` calls in `CloudBuilderService` for both `decompile.yml` and `build.yml` to gracefully handle the transient HTTP 404 while GitHub registers newly pushed workflow files.
+- [x] Decompile Workflow Integrity: Removed `|| true` from JADX step in `decompile.yml`, added verification that `out/` is non-empty before proceeding, and set `if-no-files-found: error` on `upload-artifact`.
+- [x] UI Transparency & Private Repo Assurance: Added clear notices in `ReverseEngineeringScreen`, `ReconstructionScreen`, and `SettingsScreen` informing users that the APK is committed to their GitHub repo as `app.apk` and advising use of a private repository; automatically checks for repository existence and creates a private repo if missing.
+- [x] Unit Testing: Added `JadxArtifactExtractorTest.kt` verifying priority sorting, memory cap constraints, language detection, and skipped file counting.
 
 ## Known Limitations
 - No native-lib (.so ELF) decompilation or symbol analysis.

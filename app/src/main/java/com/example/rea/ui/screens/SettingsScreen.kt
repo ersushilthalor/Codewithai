@@ -390,6 +390,13 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CleanBlue, unfocusedBorderColor = CleanBorder)
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Note: Target repository will store pushed files and 'app.apk' for cloud JADX decompilation. We strongly recommend using a private repository.",
+                            fontSize = 10.sp,
+                            color = TextMuted,
+                            lineHeight = 14.sp
+                        )
 
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(

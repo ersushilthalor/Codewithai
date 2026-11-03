@@ -13,6 +13,7 @@ val CleanBlue = Color(0xFF38BDF8)         // Bright sky blue
 val CleanIndigo = Color(0xFF6366F1)       // Vibrant modern indigo
 val CleanGreen = Color(0xFF10B981)        // Friendly emerald green (Success/Safe)
 val CleanOrange = Color(0xFFF97316)       // Warm energetic orange
+val CleanYellow = Color(0xFFFBBF24)       // Warm warning yellow
 val CleanPurple = Color(0xFFA855F7)       // Purple accent
 val CleanRed = Color(0xFFF43F5E)          // Soft red
 

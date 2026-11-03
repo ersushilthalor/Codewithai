@@ -49,6 +49,19 @@ class GitHubService {
         }
     }
 
+    suspend fun checkRepoExists(token: String, owner: String, repo: String): Boolean = withContext(Dispatchers.IO) {
+        if (token.isBlank() || owner.isBlank() || repo.isBlank()) return@withContext false
+        try {
+            val req = newRequestBuilder(token)
+                .url("https://api.github.com/repos/$owner/$repo")
+                .get()
+                .build()
+            httpClient.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun createRepo(token: String, repoName: String): Result<String> = withContext(Dispatchers.IO) {
         try {
             val payload = JSONObject().apply {

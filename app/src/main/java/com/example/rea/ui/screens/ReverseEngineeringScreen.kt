@@ -188,6 +188,30 @@ fun ReverseEngineeringScreen(
                             fontSize = 13.sp
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = CleanBlue.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBlue.copy(alpha = 0.25f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Lock, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("GitHub Cloud Decompilation Notice", fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = TextMain)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Decompilation commits the APK to your GitHub repo as 'app.apk' and executes JADX on GitHub Actions runners. We recommend using a private repo. The repository must already exist (or REA Studio will create a private repository if missing). APK limit: 50 MB.",
+                                fontSize = 10.sp,
+                                color = TextMuted,
+                                lineHeight = 14.sp
+                            )
+                        }
+                    }
                 }
             }
         }
