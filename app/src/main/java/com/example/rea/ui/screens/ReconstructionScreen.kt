@@ -80,13 +80,13 @@ fun ReconstructionScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "Target: ${analysis?.appName ?: "Camera App"}",
+                        text = "Target: ${analysis?.appName ?: "No APK Loaded"}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = CleanBlue
                     )
                     Text(
-                        text = "Clean-room synthesis with modern Google recommended architecture",
+                        text = if (analysis != null) "Clean-room synthesis with modern Google recommended architecture" else "Pick an APK from the Home screen first",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -98,7 +98,7 @@ fun ReconstructionScreen(
                         onClick = {
                             viewModel.runReconstruction(com.example.rea.data.model.ReconstructionConfig())
                         },
-                        enabled = !progress.isReconstructing,
+                        enabled = !progress.isReconstructing && analysis != null,
                         colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier

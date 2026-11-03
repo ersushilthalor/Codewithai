@@ -55,6 +55,9 @@ data class AiProvider(
     val name: String,
     val type: ProviderType,
     val apiKey: String,
+    val apiKeys: List<String> = if (apiKey.isNotBlank()) listOf(apiKey) else emptyList(),
+    val activeKeyIndex: Int = 0,
+    val autoSwitchOnLimit: Boolean = true,
     val baseUrl: String,
     val analysisModel: String,
     val codeGenModel: String,
@@ -64,7 +67,16 @@ data class AiProvider(
     val isDefault: Boolean = false,
     val latencyMs: Long = 0,
     val lastTestedStatus: String = "Untested"
-)
+) {
+    val currentKey: String
+        get() {
+            if (apiKeys.isNotEmpty()) {
+                val idx = activeKeyIndex.coerceIn(0, apiKeys.size - 1)
+                return apiKeys[idx]
+            }
+            return apiKey
+        }
+}
 
 data class ApkPermission(
     val name: String,

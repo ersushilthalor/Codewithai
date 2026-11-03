@@ -262,6 +262,39 @@ fun ReverseEngineeringScreen(
                     }
                 }
             }
+        } else {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = CleanSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(CleanSurfaceLight),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = TextMuted, modifier = Modifier.size(24.dp))
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("No APK Loaded", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap 'Change APK' above to pick an APK file from your phone storage to inspect its screens.",
+                            fontSize = 12.sp,
+                            color = TextMuted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
         }
 
         item { Spacer(modifier = Modifier.height(20.dp)) }

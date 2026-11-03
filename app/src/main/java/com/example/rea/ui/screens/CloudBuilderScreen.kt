@@ -83,13 +83,13 @@ fun CloudBuilderScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "Target: ${project?.name ?: "Reconstructed App"}",
+                        text = "Target: ${project?.name ?: "No APK Loaded"}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = CleanBlue
                     )
                     Text(
-                        text = "Configured automatically with Android 15 & Gradle 8.9",
+                        text = if (project != null) "Configured automatically with Android 15 & Gradle 8.9" else "Pick an APK from the Home screen first",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -100,7 +100,7 @@ fun CloudBuilderScreen(
 
                     Button(
                         onClick = { viewModel.triggerCloudBuild("DEBUG_APK") },
-                        enabled = !isBuilding,
+                        enabled = !isBuilding && project != null,
                         colors = ButtonDefaults.buttonColors(containerColor = CleanBlue, contentColor = CleanBg),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier

@@ -74,13 +74,7 @@ class ReaViewModel(application: Application) : AndroidViewModel(application) {
     val agentMode: StateFlow<AgentMode> = _agentMode.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            // Pre-load default sample analysis
-            val sample = analysisService.analyzeSampleTarget("auracam") { _, _, _ -> }
-            _currentAnalysis.value = sample
-            projectRepository.initializeWithDefaults(sample)
-            _selectedFile.value = sample.decompiledClasses.firstOrNull()
-        }
+        // App starts clean without junk sample data
     }
 
     fun navigateTo(screen: ScreenDestination) {

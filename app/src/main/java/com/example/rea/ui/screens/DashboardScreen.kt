@@ -53,7 +53,7 @@ fun DashboardScreen(
         item {
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Main Action Card - Super Clean & Friendly
+            // Main Action Card - Clean & Focused
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = CleanSurface,
@@ -79,25 +79,32 @@ fun DashboardScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
                                     .background(CleanBlue.copy(alpha = 0.2f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.UploadFile, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.UploadFile, contentDescription = null, tint = CleanBlue, modifier = Modifier.size(22.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "Select Any App to Rebuild",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextMain
-                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Reverse Engineer & Rebuild",
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextMain
+                                )
+                                Text(
+                                    text = "Pure Android • No PC Required",
+                                    fontSize = 12.sp,
+                                    color = TextMuted
+                                )
+                            }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = "Choose any APK from your phone. Our AI automatically scans its screens, extracts features, and rebuilds it for you in 1 click.",
+                            text = "Select any APK installed or saved on your phone. REA Studio decodes its architecture, extracts components, and reconstructs a modern Jetpack Compose version in seconds.",
                             fontSize = 13.sp,
                             color = TextMuted,
                             lineHeight = 18.sp
@@ -111,10 +118,10 @@ fun DashboardScreen(
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
+                                .height(54.dp)
                                 .testTag("dash_upload_apk_btn")
                         ) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(22.dp))
                             Spacer(modifier = Modifier.width(10.dp))
                             Text("Pick APK from Phone", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
                         }
@@ -123,7 +130,7 @@ fun DashboardScreen(
             }
         }
 
-        // Active Loaded App Card
+        // Active Loaded App Card OR Clean Empty State
         val currentApp = analysis
         if (currentApp != null) {
             item {
@@ -142,12 +149,12 @@ fun DashboardScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
-                                        .size(44.dp)
+                                        .size(46.dp)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(CleanGreen.copy(alpha = 0.2f)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Default.Android, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(26.dp))
+                                    Icon(Icons.Default.Android, contentDescription = null, tint = CleanGreen, modifier = Modifier.size(28.dp))
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
@@ -158,7 +165,7 @@ fun DashboardScreen(
                                         color = TextMain
                                     )
                                     Text(
-                                        text = "Version ${currentApp.versionName} • Clean Room Verified",
+                                        text = "${currentApp.packageName} • v${currentApp.versionName}",
                                         fontSize = 12.sp,
                                         color = TextMuted
                                     )
@@ -189,12 +196,13 @@ fun DashboardScreen(
                             Button(
                                 onClick = {
                                     viewModel.runReconstruction(com.example.rea.data.model.ReconstructionConfig())
+                                    viewModel.navigateTo(ScreenDestination.RECONSTRUCTION)
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = CleanIndigo, contentColor = TextMain),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(48.dp)
+                                    .height(50.dp)
                                     .testTag("dash_reconstruct_btn")
                             ) {
                                 Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -210,7 +218,7 @@ fun DashboardScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(48.dp)
+                                    .height(50.dp)
                                     .testTag("dash_build_direct_btn")
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -221,54 +229,59 @@ fun DashboardScreen(
                     }
                 }
             }
+        } else {
+            // Clean Initial State (No Junk Samples)
+            item {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = CleanSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(CircleShape)
+                                .background(CleanSurfaceLight),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(26.dp))
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "No APK Loaded",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMain
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap the button above to pick an APK file from your phone storage to start reverse engineering.",
+                            fontSize = 12.sp,
+                            color = TextMuted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 17.sp
+                        )
+                    }
+                }
+            }
         }
 
-        // 1-Tap Sample Apps
+        // Quick Navigation Tiles
         item {
             Text(
-                text = "Or Try a Sample App (1-Tap)",
+                text = "Studio Tools",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextMain
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SampleAppRow(
-                    name = "Camera Pro App",
-                    description = "Modern camera with live preview, zoom & gallery",
-                    icon = Icons.Default.CameraAlt,
-                    accentColor = CleanBlue,
-                    onClick = {
-                        viewModel.runAnalysisOnSample("auracam")
-                    }
-                )
-
-                SampleAppRow(
-                    name = "CryptoVault Sentinel",
-                    description = "High security biometric vault with dark UI",
-                    icon = Icons.Default.Lock,
-                    accentColor = CleanPurple,
-                    onClick = {
-                        viewModel.runAnalysisOnSample("cryptovault")
-                    }
-                )
-
-                SampleAppRow(
-                    name = "PulseTrack Fitness",
-                    description = "Health tracker with live workout statistics",
-                    icon = Icons.Default.FitnessCenter,
-                    accentColor = CleanGreen,
-                    onClick = {
-                        viewModel.runAnalysisOnSample("pulsetrack")
-                    }
-                )
-            }
-        }
-
-        // Quick Tools Row
-        item {
-            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -297,59 +310,6 @@ fun DashboardScreen(
 }
 
 @Composable
-fun SampleAppRow(
-    name: String,
-    description: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    accentColor: Color,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = CleanSurface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(accentColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(22.dp))
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
-                Text(description, fontSize = 12.sp, color = TextMuted)
-            }
-
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = accentColor.copy(alpha = 0.15f)
-            ) {
-                Text(
-                    text = "Load",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = accentColor,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun QuickToolCard(
     title: String,
     subtitle: String,
@@ -367,15 +327,15 @@ fun QuickToolCard(
         Column(modifier = Modifier.padding(14.dp)) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(color.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
             }
             Spacer(modifier = Modifier.height(10.dp))
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextMain)
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextMain)
             Text(subtitle, fontSize = 11.sp, color = TextMuted)
         }
     }

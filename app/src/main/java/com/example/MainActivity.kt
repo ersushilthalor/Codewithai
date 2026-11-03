@@ -30,6 +30,24 @@ class MainActivity : ComponentActivity() {
                 val engineState by viewModel.engineManager.engineState.collectAsState()
                 val defaultProvider = viewModel.providerManager.getDefaultProvider()
 
+                // Request all required runtime permissions on app start
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+                ) { permissions ->
+                    // Permissions granted/denied callback
+                }
+
+                LaunchedEffect(Unit) {
+                    val requiredPerms = mutableListOf<String>()
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        requiredPerms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    if (requiredPerms.isNotEmpty()) {
+                        permissionLauncher.launch(requiredPerms.toTypedArray())
+                    }
+                }
+
                 // System back button returns to Dashboard
                 if (currentScreen != ScreenDestination.DASHBOARD) {
                     BackHandler {
