@@ -209,6 +209,47 @@ data class CodeDiff(
     val replacementSnippet: String
 )
 
+data class ReaSkillAction(
+    val skillKey: String,
+    val title: String,
+    val description: String,
+    val status: String = "Completed",
+    val isRunning: Boolean = false
+)
+
+data class PermissionItemData(
+    val permission: String,
+    val label: String,
+    val description: String,
+    val isDangerous: Boolean = false,
+    val isGranted: Boolean = true
+)
+
+data class ChatPermissionCardData(
+    val id: String,
+    val title: String = "Required Permissions",
+    val description: String = "Permissions detected in target application manifest",
+    val allSelected: Boolean = true,
+    val permissions: List<PermissionItemData> = emptyList(),
+    val isAccepted: Boolean = false
+)
+
+data class ApkExportCardData(
+    val apkFileName: String,
+    val sizeBytes: Long,
+    val sha256: String,
+    val isSavedToDevice: Boolean = false,
+    val targetPackage: String = ""
+)
+
+enum class ChatMode(val title: String, val subtitle: String) {
+    FULL_REBUILD("Full Rebuild", "Complete Decompile & Rebuild"),
+    UI_CLONE("UI Clone", "Extract & Generate Compose UI"),
+    SECURITY_AUDIT("Security Audit", "Permissions & Vulnerabilities"),
+    FEATURE_INJECT("Feature Injection", "Inject Mods & Custom Logic"),
+    QUICK_INSPECT("Quick Inspect", "DEX, SDK & Package Metadata")
+}
+
 data class AgentMessage(
     val id: String,
     val sender: MessageSender,
@@ -216,7 +257,13 @@ data class AgentMessage(
     val text: String,
     val toolCalls: List<ToolCallInfo> = emptyList(),
     val proposedDiff: CodeDiff? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val selectedApkName: String? = null,
+    val selectedApkSize: Long? = null,
+    val selectedImageUri: String? = null,
+    val skillsUsed: List<ReaSkillAction> = emptyList(),
+    val permissionCard: ChatPermissionCardData? = null,
+    val apkExportCard: ApkExportCardData? = null
 )
 
 enum class BuildStatus {

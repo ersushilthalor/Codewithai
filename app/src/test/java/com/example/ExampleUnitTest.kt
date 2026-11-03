@@ -58,5 +58,44 @@ class ExampleUnitTest {
     assertTrue(names.contains("Groq"))
     assertTrue(names.contains("Mistral AI"))
   }
+
+  @Test
+  fun testPermissionCardSelectAllTogglesAllPermissions() {
+    val items = listOf(
+      com.example.rea.data.model.PermissionItemData("android.permission.CAMERA", "CAMERA", "Camera access", true, false),
+      com.example.rea.data.model.PermissionItemData("android.permission.INTERNET", "INTERNET", "Internet access", false, false)
+    )
+    val card = com.example.rea.data.model.ChatPermissionCardData(
+      id = "test_perm_card",
+      allSelected = false,
+      permissions = items
+    )
+
+    // Verify initial state
+    assertFalse(card.allSelected)
+    assertTrue(card.permissions.none { it.isGranted })
+
+    // Simulate "Select All" toggle turned ON
+    val selectAll = true
+    val updatedCard = card.copy(
+      allSelected = selectAll,
+      permissions = card.permissions.map { it.copy(isGranted = selectAll) }
+    )
+
+    // Verify all permissions are automatically granted
+    assertTrue(updatedCard.allSelected)
+    assertTrue(updatedCard.permissions.all { it.isGranted })
+  }
+
+  @Test
+  fun testChatModesAvailable() {
+    val modes = com.example.rea.data.model.ChatMode.values()
+    assertEquals(5, modes.size)
+    assertTrue(modes.any { it == com.example.rea.data.model.ChatMode.FULL_REBUILD })
+    assertTrue(modes.any { it == com.example.rea.data.model.ChatMode.UI_CLONE })
+    assertTrue(modes.any { it == com.example.rea.data.model.ChatMode.SECURITY_AUDIT })
+    assertTrue(modes.any { it == com.example.rea.data.model.ChatMode.FEATURE_INJECT })
+    assertTrue(modes.any { it == com.example.rea.data.model.ChatMode.QUICK_INSPECT })
+  }
 }
 

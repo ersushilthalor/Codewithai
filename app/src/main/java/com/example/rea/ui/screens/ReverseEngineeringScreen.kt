@@ -136,9 +136,11 @@ fun ReverseEngineeringScreen(
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMain),
                             border = androidx.compose.foundation.BorderStroke(1.dp, CleanBorder),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.height(48.dp).testTag("re_upload_btn")
+                            modifier = Modifier.height(48.dp).testTag("re_select_apk_btn")
                         ) {
-                            Text("Change APK", fontSize = 13.sp)
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Select APK", fontSize = 13.sp)
                         }
                     }
                 }
@@ -281,13 +283,13 @@ fun ReverseEngineeringScreen(
                                 .background(CleanSurfaceLight),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.UploadFile, contentDescription = null, tint = TextMuted, modifier = Modifier.size(24.dp))
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = TextMuted, modifier = Modifier.size(24.dp))
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("No APK Loaded", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
+                        Text("No APK Selected", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextMain)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tap 'Change APK' above to pick an APK file from your phone storage to inspect its screens.",
+                            text = "Tap 'Select APK' above or use the AI Chat on the Home screen to select an APK from your phone storage.",
                             fontSize = 12.sp,
                             color = TextMuted,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center

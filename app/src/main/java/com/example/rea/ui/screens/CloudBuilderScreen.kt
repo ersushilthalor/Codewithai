@@ -1,6 +1,8 @@
 package com.example.rea.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -34,6 +36,14 @@ fun CloudBuilderScreen(
     val project = viewModel.projectRepository.getCurrentProject()
     val context = LocalContext.current
     var showLogs by remember { mutableStateOf(false) }
+
+    val exportApkLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")
+    ) { uri ->
+        uri?.let {
+            viewModel.saveFinalApkToStorage(context, it)
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -191,7 +201,8 @@ fun CloudBuilderScreen(
 
                             Button(
                                 onClick = {
-                                    Toast.makeText(context, "Downloading ${activeJob.artifactName} to your phone...", Toast.LENGTH_LONG).show()
+                                    val name = activeJob.artifactName ?: "reconstructed-debug.apk"
+                                    exportApkLauncher.launch(name)
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = CleanGreen, contentColor = CleanBg),
                                 shape = RoundedCornerShape(14.dp),
@@ -200,9 +211,9 @@ fun CloudBuilderScreen(
                                     .height(52.dp)
                                     .testTag("download_apk_btn")
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Download APK to Phone", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                                Text("Save Final APK to Device", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))
