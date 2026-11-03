@@ -1,0 +1,6 @@
+{
+  "name": "REA Studio",
+  "description": "AI-powered Android reverse engineering, architecture reconstruction, code workspace, and cloud APK builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
